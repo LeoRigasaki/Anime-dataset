@@ -1,0 +1,14 @@
+# Data files
+data/raw/*.csv
+data/processed/*.csv
+
+# Environment variables
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.class
+.Python
+env/
+
