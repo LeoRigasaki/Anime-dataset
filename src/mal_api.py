@@ -3,78 +3,154 @@ from dotenv import load_dotenv
 import requests
 import pandas as pd
 from datetime import datetime
+import time
 
 # Load environment variables
 load_dotenv()
 
 CLIENT_ID = os.getenv('MAL_CLIENT_ID')
 
-def fetch_anime_rankings(limit=100):
-    url = 'https://api.myanimelist.net/v2/anime/ranking'
+def get_all_seasons(start_year=1970):
+    current_year = datetime.now().year
+    seasons = ['winter', 'spring', 'summer', 'fall']
+    all_seasons = []
+    
+    for year in range(start_year, current_year + 1):
+        for season in seasons:
+            all_seasons.append((year, season))
+    
+    return all_seasons
+
+def fetch_seasonal_anime(year, season, limit_per_page=500):
+    url = f'https://api.myanimelist.net/v2/anime/season/{year}/{season}'
     headers = {
         'X-MAL-CLIENT-ID': CLIENT_ID
     }
     
     params = {
-        'ranking_type': 'all',
-        'limit': limit,
-        'fields': 'id,title,mean,rank,popularity,num_scoring_users,media_type,status,num_episodes,start_date,end_date'
+        'limit': limit_per_page,
+        'fields': ('id,title,mean,rank,popularity,num_scoring_users,'
+                  'media_type,status,num_episodes,start_date,end_date,'
+                  'genres,studios,source,synopsis,rating,alternative_titles,'
+                  'start_season,broadcast,average_episode_duration,statistics')
     }
     
     try:
+        print(f"Fetching {season} {year} anime...")
         response = requests.get(url, headers=headers, params=params)
         response.raise_for_status()
-        return response.json()['data']
+        data = response.json()
+        print(f"Retrieved {len(data.get('data', []))} anime for {season} {year}")
+        return data.get('data', [])
     except Exception as e:
-        print(f"Error fetching anime data: {e}")
-        return None
+        print(f"Error fetching {season} {year}: {e}")
+        return []
 
 def process_anime_data(raw_data):
     processed_data = []
     
     for item in raw_data:
         node = item['node']
+        
+        # Get genres list
+        genres = [genre['name'] for genre in node.get('genres', [])]
+        
+        # Get studios list
+        studios = [studio['name'] for studio in node.get('studios', [])]
+        
+        # Get alternative titles
+        alt_titles = node.get('alternative_titles', {})
+        
+        # Process statistics
+        stats = node.get('statistics', {})
+        
         anime_info = {
             'anime_id': node['id'],
             'title': node['title'],
+            'english_title': alt_titles.get('en', ''),
+            'japanese_title': alt_titles.get('ja', ''),
             'type': node['media_type'],
             'episodes': node['num_episodes'],
+            'duration': node.get('average_episode_duration', 0),
             'status': node['status'],
-            'score': node['mean'],
-            'scored_by': node['num_scoring_users'],
-            'rank': node['rank'],
-            'popularity': node['popularity'],
+            'source': node.get('source', ''),
+            'season': f"{node.get('start_season', {}).get('season', '')} {node.get('start_season', {}).get('year', '')}",
+            'studios': ';'.join(studios),
+            'genres': ';'.join(genres),
+            'rating': node.get('rating', ''),
+            'score': node.get('mean', 0),
+            'scored_by': node.get('num_scoring_users', 0),
+            'rank': node.get('rank', 0),
+            'popularity': node.get('popularity', 0),
+            'members': stats.get('num_list_users', 0),
+            'favorites': stats.get('num_favorites', 0),
+            'watching': stats.get('status', {}).get('watching', 0),
+            'completed': stats.get('status', {}).get('completed', 0),
+            'on_hold': stats.get('status', {}).get('on_hold', 0),
+            'dropped': stats.get('status', {}).get('dropped', 0),
+            'plan_to_watch': stats.get('status', {}).get('plan_to_watch', 0),
             'start_date': node.get('start_date', ''),
-            'end_date': node.get('end_date', '')
+            'end_date': node.get('end_date', ''),
+            'broadcast_day': node.get('broadcast', {}).get('day_of_the_week', ''),
+            'broadcast_time': node.get('broadcast', {}).get('start_time', ''),
+            'synopsis': node.get('synopsis', '').replace('\n', ' ').replace('\r', '')
         }
         processed_data.append(anime_info)
     
     return processed_data
 
-def save_data(data):
+def save_data(data, folder='data/raw'):
     # Create DataFrame
     df = pd.DataFrame(data)
     
     # Generate filename with current date
     current_date = datetime.now().strftime('%Y%m%d')
-    filename = f'data/raw/anime_ranking_{current_date}.csv'
+    filename = f'{folder}/anime_seasonal_{current_date}.csv'
     
-    # Save to CSV
-    df.to_csv(filename, index=False)
+    # Create folder if it doesn't exist
+    os.makedirs(folder, exist_ok=True)
+    
+    # Save to CSV with UTF-8 encoding
+    df.to_csv(filename, index=False, encoding='utf-8')
     print(f"Data saved to {filename}")
     return filename
 
 def main():
-    print("Fetching anime rankings...")
-    raw_data = fetch_anime_rankings(limit=100)  # Fetch top 100 anime
+    print("Starting historical anime data collection...")
+    print(f"Using Client ID: {CLIENT_ID[:5]}..." if CLIENT_ID else "No Client ID found!")
     
-    if raw_data:
-        print("Processing data...")
-        processed_data = process_anime_data(raw_data)
+    all_seasons = get_all_seasons()
+    all_anime_data = []
+    unique_anime_ids = set()  # To avoid duplicates
+    
+    for year, season in all_seasons:
+        seasonal_data = fetch_seasonal_anime(year, season)
+        
+        # Add only unique anime
+        for anime in seasonal_data:
+            if anime['node']['id'] not in unique_anime_ids:
+                all_anime_data.append(anime)
+                unique_anime_ids.add(anime['node']['id'])
+        
+        # Add delay to avoid rate limiting
+        time.sleep(1)
+    
+    if all_anime_data:
+        print("\nProcessing all collected data...")
+        processed_data = process_anime_data(all_anime_data)
         
         print("Saving data...")
         filename = save_data(processed_data)
-        print(f"Successfully collected data for {len(processed_data)} anime!")
+        
+        # Print summary statistics
+        df = pd.read_csv(filename)
+        print("\nCollection Summary:")
+        print(f"Total unique anime collected: {len(df)}")
+        print(f"Unique genres: {len(set(';'.join(df['genres'].dropna()).split(';')))}")
+        print(f"Unique studios: {len(set(';'.join(df['studios'].dropna()).split(';')))}")
+        print(f"Date range: {df['start_date'].min()} to {df['start_date'].max()}")
+        print(f"Average score: {df['score'].mean():.2f}")
+        print(f"Data saved to: {filename}")
 
 if __name__ == "__main__":
     main()
