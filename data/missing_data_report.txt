@@ -1,0 +1,85 @@
+Anime Data Coverage Report
+========================
+
+Overall Statistics:
+Total anime entries: 20010
+Date range: 1966-07-01 to 2024-12-27
+
+Anime Count by Year:
+------------------
+Year 1966: 1 anime
+Year 1968: 1 anime
+Year 1969: 10 anime
+Year 1970: 42 anime
+Year 1971: 31 anime
+Year 1972: 33 anime
+Year 1973: 31 anime
+Year 1974: 39 anime
+Year 1975: 41 anime
+Year 1976: 45 anime
+Year 1977: 49 anime
+Year 1978: 55 anime
+Year 1979: 74 anime
+Year 1980: 72 anime
+Year 1981: 88 anime
+Year 1982: 93 anime
+Year 1983: 97 anime
+Year 1984: 98 anime
+Year 1985: 104 anime
+Year 1986: 134 anime
+Year 1987: 151 anime
+Year 1988: 153 anime
+Year 1989: 176 anime
+Year 1990: 189 anime
+Year 1991: 191 anime
+Year 1992: 201 anime
+Year 1993: 191 anime
+Year 1994: 177 anime
+Year 1995: 180 anime
+Year 1996: 172 anime
+Year 1997: 169 anime
+Year 1998: 200 anime
+Year 1999: 211 anime
+Year 2000: 191 anime
+Year 2001: 279 anime
+Year 2002: 264 anime
+Year 2003: 273 anime
+Year 2004: 293 anime
+Year 2005: 268 anime
+Year 2006: 417 anime
+Year 2007: 406 anime
+Year 2008: 407 anime
+Year 2009: 504 anime
+Year 2010: 507 anime
+Year 2011: 627 anime
+Year 2012: 703 anime
+Year 2013: 739 anime
+Year 2014: 860 anime
+Year 2015: 860 anime
+Year 2016: 1009 anime
+Year 2017: 1041 anime
+Year 2018: 1008 anime
+Year 2019: 953 anime
+Year 2020: 942 anime
+Year 2021: 1057 anime
+Year 2022: 1057 anime
+Year 2023: 1008 anime
+Year 2024: 838 anime
+
+Missing or Zero Count Years:
+-------------------------
+Year 1970: Only 42 anime (possibly incomplete)
+Year 1971: Only 31 anime (possibly incomplete)
+Year 1972: Only 33 anime (possibly incomplete)
+Year 1973: Only 31 anime (possibly incomplete)
+Year 1974: Only 39 anime (possibly incomplete)
+Year 1975: Only 41 anime (possibly incomplete)
+Year 1976: Only 45 anime (possibly incomplete)
+Year 1977: Only 49 anime (possibly incomplete)
+Year 1978: Only 55 anime (possibly incomplete)
+Year 1979: Only 74 anime (possibly incomplete)
+Year 1980: Only 72 anime (possibly incomplete)
+Year 1981: Only 88 anime (possibly incomplete)
+Year 1982: Only 93 anime (possibly incomplete)
+Year 1983: Only 97 anime (possibly incomplete)
+Year 1984: Only 98 anime (possibly incomplete)
