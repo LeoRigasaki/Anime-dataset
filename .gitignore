@@ -1,7 +1,3 @@
-# Data files
-data/raw/*.csv
-data/processed/*.csv
-
 # Environment variables
 .env
 
