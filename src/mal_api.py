@@ -99,7 +99,22 @@ def process_anime_data(raw_data):
     
     return processed_data
 
+def clean_old_files(folder='data/raw'):
+    """Clean old anime seasonal CSV files."""
+    if os.path.exists(folder):
+        for file in os.listdir(folder):
+            if file.startswith('anime_seasonal_') and file.endswith('.csv'):
+                file_path = os.path.join(folder, file)
+                try:
+                    os.remove(file_path)
+                    print(f"Removed old file: {file}")
+                except Exception as e:
+                    print(f"Error removing {file}: {e}")
+
 def save_data(data, folder='data/raw'):
+    # Clean old files first
+    clean_old_files(folder)
+    
     # Create DataFrame
     df = pd.DataFrame(data)
     

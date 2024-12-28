@@ -25,6 +25,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       
+      - name: Set current date
+        run: echo "CURRENT_DATE=$(date +'%Y%m%d')" >> $GITHUB_ENV
+      
       - name: Run data collection
         id: update_attempt
         continue-on-error: true
@@ -34,14 +37,25 @@ jobs:
           python src/mal_api.py
           python src/check_missing.py
       
+      - name: Debug Git Status
+        run: |
+          echo "Current working directory:"
+          pwd
+          echo "Files in data/raw:"
+          ls -la data/raw/
+          echo "Git status:"
+          git status
+      
       - name: Check Update Status
         id: check_update
         if: steps.update_attempt.outcome == 'success'
         run: |
-          if git diff --quiet data/raw/; then
-            echo "status=unchanged" >> $GITHUB_OUTPUT
-          else
+          if [ -f "data/raw/anime_seasonal_${CURRENT_DATE}.csv" ]; then
             echo "status=changed" >> $GITHUB_OUTPUT
+            echo "New data file generated successfully"
+          else
+            echo "status=unchanged" >> $GITHUB_OUTPUT
+            echo "No new data file generated"
           fi
       
       - name: Commit Changes
@@ -49,6 +63,18 @@ jobs:
         run: |
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
-          git add data/raw/*.csv data/missing_data_report.txt
+          git add "data/raw/anime_seasonal_${CURRENT_DATE}.csv" data/missing_data_report.txt
           git commit -m "data: Update anime data for $(date +'%Y-%m-%d')"
-          git push
+          git push origin ${GITHUB_REF#refs/heads/}
+      
+      - name: Create Issue on Failure
+        if: failure()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Data Update Failed',
+              body: `The anime data update workflow failed on ${new Date().toISOString()}\n\nPlease check the [workflow logs](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for more details.`
+            })
