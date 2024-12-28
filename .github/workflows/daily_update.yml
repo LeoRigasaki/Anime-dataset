@@ -27,8 +27,8 @@ jobs:
       
       - name: Set current date
         run: |
-          echo "CURRENT_DATE=$(date +'%Y%m%d')" >> $GITHUB_ENV
-          echo "Using date: ${{ env.CURRENT_DATE }}"
+          echo "CURRENT_DATE=$(date -u +'%Y%m%d')" >> $GITHUB_ENV
+          echo "Using UTC date: ${{ env.CURRENT_DATE }}"
       
       - name: Ensure directories exist
         run: |
@@ -45,6 +45,18 @@ jobs:
           python -u src/mal_api.py
           echo "Running check missing..."
           python -u src/check_missing.py
+      
+      - name: Debug After Collection
+        run: |
+          echo "Current date is: ${{ env.CURRENT_DATE }}"
+          echo "Looking for file: data/raw/anime_seasonal_${{ env.CURRENT_DATE }}.csv"
+          echo "Files in data/raw:"
+          ls -la data/raw/
+          echo "Content of data/raw directory:"
+          for f in data/raw/*.csv; do
+            echo "=== $f ==="
+            wc -l "$f" || echo "Cannot read file"
+          done
       
       - name: Verify file creation
         id: verify_file

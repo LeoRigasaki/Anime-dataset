@@ -101,15 +101,21 @@ def process_anime_data(raw_data):
 
 def clean_old_files(folder='data/raw'):
     """Clean old anime seasonal CSV files."""
+    print(f"Cleaning old files in {folder}")
     if os.path.exists(folder):
-        for file in os.listdir(folder):
+        files = os.listdir(folder)
+        print(f"Found {len(files)} files in directory")
+        for file in files:
             if file.startswith('anime_seasonal_') and file.endswith('.csv'):
                 file_path = os.path.join(folder, file)
                 try:
+                    print(f"Attempting to remove: {file}")
                     os.remove(file_path)
-                    print(f"Removed old file: {file}")
+                    print(f"Successfully removed: {file}")
                 except Exception as e:
                     print(f"Error removing {file}: {e}")
+    else:
+        print(f"Directory {folder} does not exist")
 
 def save_data(data, folder='data/raw'):
     """Save data to CSV and ensure the file exists."""
@@ -119,8 +125,9 @@ def save_data(data, folder='data/raw'):
     # Create DataFrame
     df = pd.DataFrame(data)
     
-    # Generate filename with current date
-    current_date = datetime.now().strftime('%Y%m%d')
+    # Generate filename with UTC date to match GitHub Actions
+    current_date = datetime.utcnow().strftime('%Y%m%d')
+    print(f"Using UTC date for filename: {current_date}")
     filename = f'{folder}/anime_seasonal_{current_date}.csv'
     
     # Create folder if it doesn't exist
