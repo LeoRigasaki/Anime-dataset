@@ -30,11 +30,12 @@ jobs:
           echo "CURRENT_DATE=$(date -u +'%Y%m%d')" >> $GITHUB_ENV
           echo "Using UTC date: ${{ env.CURRENT_DATE }}"
       
-      - name: Ensure directories exist
+      - name: Clean old files
         run: |
-          mkdir -p data/raw
-          echo "Created data directory structure:"
-          ls -la data/
+          echo "Cleaning old CSV files..."
+          rm -f data/raw/anime_seasonal_*.csv
+          echo "Current contents of data/raw:"
+          ls -la data/raw/ || echo "Directory is empty"
       
       - name: Run data collection
         id: update_attempt
@@ -48,84 +49,32 @@ jobs:
       
       - name: Debug After Collection
         run: |
-          echo "Current date is: ${{ env.CURRENT_DATE }}"
-          echo "Looking for file: data/raw/anime_seasonal_${{ env.CURRENT_DATE }}.csv"
-          echo "Files in data/raw:"
+          echo "Files in data/raw after collection:"
           ls -la data/raw/
-          echo "Content of data/raw directory:"
-          for f in data/raw/*.csv; do
-            echo "=== $f ==="
-            wc -l "$f" || echo "Cannot read file"
-          done
-      
-      - name: Verify file creation
-        id: verify_file
-        run: |
-          expected_file="data/raw/anime_seasonal_${{ env.CURRENT_DATE }}.csv"
-          echo "Looking for file: $expected_file"
           
+          expected_file="data/raw/anime_seasonal_${{ env.CURRENT_DATE }}.csv"
           if [ -f "$expected_file" ]; then
-            file_size=$(stat -f%z "$expected_file" 2>/dev/null || stat -c%s "$expected_file")
-            echo "File exists with size: $file_size bytes"
-            if [ "$file_size" -gt 0 ]; then
-              echo "status=changed" >> $GITHUB_OUTPUT
-              echo "Valid file detected"
-            else
-              echo "status=unchanged" >> $GITHUB_OUTPUT
-              echo "Error: File exists but is empty"
-            fi
-          else
-            echo "status=unchanged" >> $GITHUB_OUTPUT
-            echo "Error: Expected file not found"
-            echo "Contents of data/raw:"
-            ls -la data/raw/
+            echo "Found new file: $expected_file"
+            wc -l "$expected_file"
           fi
-      
-          - name: Verify file creation
-          id: verify_file
-          run: |
-            expected_file="data/raw/anime_seasonal_${{ env.CURRENT_DATE }}.csv"
-            echo "Looking for file: $expected_file"
-            
-            if [ -f "$expected_file" ]; then
-              file_size=$(stat -f%z "$expected_file" 2>/dev/null || stat -c%s "$expected_file")
-              echo "File exists with size: $file_size bytes"
-              if [ "$file_size" -gt 0 ]; then
-                echo "status=changed" >> $GITHUB_OUTPUT
-                echo "Valid file detected"
-              else
-                echo "status=unchanged" >> $GITHUB_OUTPUT
-                echo "Error: File exists but is empty"
-              fi
-            else
-              echo "status=unchanged" >> $GITHUB_OUTPUT
-              echo "Error: Expected file not found"
-              echo "Contents of data/raw:"
-              ls -la data/raw/
-            fi
-  
-          - name: Commit Changes
-            if: steps.verify_file.outputs.status == 'changed'
-            run: |
-              git config --local user.email "actions@github.com"
-              git config --local user.name "GitHub Actions"
-              
-              # Fetch and reset to latest main
-              git fetch origin
-              git reset --hard origin/main
-              
-              # Add and commit files
-              file_to_commit="data/raw/anime_seasonal_${{ env.CURRENT_DATE }}.csv"
-              echo "Committing file: $file_to_commit"
-              
-              git add "$file_to_commit" data/missing_data_report.txt
-              git commit -m "data: Update anime data for $(date +'%Y-%m-%d')"
-              
-              # Pull with rebase to handle any concurrent changes
-              git pull --rebase origin main
-              
-              # Push changes
-              git push origin main
+
+      - name: Commit Changes
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          
+          # Stage all changes in data/raw and missing_data_report.txt
+          git add data/raw/*.csv data/missing_data_report.txt
+          
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 0
+          else
+            echo "Changes detected, committing..."
+            git commit -m "data: Update anime data for $(date +'%Y-%m-%d')"
+            git push origin ${GITHUB_REF#refs/heads/}
+          fi
 
       - name: Create Issue on Failure
         if: failure()
