@@ -81,18 +81,28 @@ jobs:
             ls -la data/raw/
           fi
       
-      - name: Commit Changes
-        if: steps.verify_file.outputs.status == 'changed'
-        run: |
-          git config --local user.email "actions@github.com"
-          git config --local user.name "GitHub Actions"
-          
-          file_to_commit="data/raw/anime_seasonal_${{ env.CURRENT_DATE }}.csv"
-          echo "Committing file: $file_to_commit"
-          
-          git add "$file_to_commit" data/missing_data_report.txt
-          git commit -m "data: Update anime data for $(date +'%Y-%m-%d')"
-          git push origin ${GITHUB_REF#refs/heads/}
+          - name: Commit Changes
+          if: steps.verify_file.outputs.status == 'changed'
+          run: |
+            git config --local user.email "actions@github.com"
+            git config --local user.name "GitHub Actions"
+            
+            # Fetch and reset to latest main
+            git fetch origin
+            git reset --hard origin/main
+            
+            # Add and commit files
+            file_to_commit="data/raw/anime_seasonal_${{ env.CURRENT_DATE }}.csv"
+            echo "Committing file: $file_to_commit"
+            
+            git add "$file_to_commit" data/missing_data_report.txt
+            git commit -m "data: Update anime data for $(date +'%Y-%m-%d')"
+            
+            # Pull with rebase to handle any concurrent changes
+            git pull --rebase origin main
+            
+            # Push with force if needed
+            git push origin main
 
       - name: Create Issue on Failure
         if: failure()
