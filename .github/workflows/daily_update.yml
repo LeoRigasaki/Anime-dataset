@@ -1,8 +1,8 @@
 name: Daily Anime Data Update
 on:
   schedule:
-    - cron: '0 0 * * *'    # Runs every day at midnight
-  workflow_dispatch:        # Allows manual trigger for testing
+    - cron: '0 0 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -26,47 +26,62 @@ jobs:
           pip install -r requirements.txt
       
       - name: Set current date
-        run: echo "CURRENT_DATE=$(date +'%Y%m%d')" >> $GITHUB_ENV
+        run: |
+          echo "CURRENT_DATE=$(date +'%Y%m%d')" >> $GITHUB_ENV
+          echo "Using date: ${{ env.CURRENT_DATE }}"
+      
+      - name: Ensure directories exist
+        run: |
+          mkdir -p data/raw
+          echo "Created data directory structure:"
+          ls -la data/
       
       - name: Run data collection
         id: update_attempt
-        continue-on-error: true
         env:
           MAL_CLIENT_ID: ${{ secrets.MAL_CLIENT_ID }}
         run: |
-          python src/mal_api.py
-          python src/check_missing.py
+          echo "Starting data collection..."
+          python -u src/mal_api.py
+          echo "Running check missing..."
+          python -u src/check_missing.py
       
-      - name: Debug Git Status
+      - name: Verify file creation
+        id: verify_file
         run: |
-          echo "Current working directory:"
-          pwd
-          echo "Files in data/raw:"
-          ls -la data/raw/
-          echo "Git status:"
-          git status
-      
-      - name: Check Update Status
-        id: check_update
-        if: steps.update_attempt.outcome == 'success'
-        run: |
-          if [ -f "data/raw/anime_seasonal_${CURRENT_DATE}.csv" ]; then
-            echo "status=changed" >> $GITHUB_OUTPUT
-            echo "New data file generated successfully"
+          expected_file="data/raw/anime_seasonal_${{ env.CURRENT_DATE }}.csv"
+          echo "Looking for file: $expected_file"
+          
+          if [ -f "$expected_file" ]; then
+            file_size=$(stat -f%z "$expected_file" 2>/dev/null || stat -c%s "$expected_file")
+            echo "File exists with size: $file_size bytes"
+            if [ "$file_size" -gt 0 ]; then
+              echo "status=changed" >> $GITHUB_OUTPUT
+              echo "Valid file detected"
+            else
+              echo "status=unchanged" >> $GITHUB_OUTPUT
+              echo "Error: File exists but is empty"
+            fi
           else
             echo "status=unchanged" >> $GITHUB_OUTPUT
-            echo "No new data file generated"
+            echo "Error: Expected file not found"
+            echo "Contents of data/raw:"
+            ls -la data/raw/
           fi
       
       - name: Commit Changes
-        if: steps.check_update.outputs.status == 'changed'
+        if: steps.verify_file.outputs.status == 'changed'
         run: |
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
-          git add "data/raw/anime_seasonal_${CURRENT_DATE}.csv" data/missing_data_report.txt
+          
+          file_to_commit="data/raw/anime_seasonal_${{ env.CURRENT_DATE }}.csv"
+          echo "Committing file: $file_to_commit"
+          
+          git add "$file_to_commit" data/missing_data_report.txt
           git commit -m "data: Update anime data for $(date +'%Y-%m-%d')"
           git push origin ${GITHUB_REF#refs/heads/}
-      
+
       - name: Create Issue on Failure
         if: failure()
         uses: actions/github-script@v6

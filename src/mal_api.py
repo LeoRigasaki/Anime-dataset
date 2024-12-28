@@ -112,6 +112,7 @@ def clean_old_files(folder='data/raw'):
                     print(f"Error removing {file}: {e}")
 
 def save_data(data, folder='data/raw'):
+    """Save data to CSV and ensure the file exists."""
     # Clean old files first
     clean_old_files(folder)
     
@@ -126,9 +127,23 @@ def save_data(data, folder='data/raw'):
     os.makedirs(folder, exist_ok=True)
     
     # Save to CSV with UTF-8 encoding
-    df.to_csv(filename, index=False, encoding='utf-8')
-    print(f"Data saved to {filename}")
-    return filename
+    try:
+        df.to_csv(filename, index=False, encoding='utf-8')
+        print(f"Data saved to {filename}")
+        
+        # Verify file was created
+        if os.path.exists(filename):
+            file_size = os.path.getsize(filename)
+            print(f"File created successfully. Size: {file_size} bytes")
+            if file_size == 0:
+                print("Warning: File is empty!")
+        else:
+            print("Warning: File was not created!")
+        
+        return filename
+    except Exception as e:
+        print(f"Error saving data: {e}")
+        raise
 
 def main():
     print("Starting historical anime data collection...")
