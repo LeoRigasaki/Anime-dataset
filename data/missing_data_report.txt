@@ -2,7 +2,7 @@ Anime Data Coverage Report
 ========================
 
 Overall Statistics:
-Total anime entries: 20106
+Total anime entries: 20156
 Date range: 1966-07-01 to 2025-07
 
 Anime Count by Year:
@@ -44,9 +44,9 @@ Year 2000: 191 anime
 Year 2001: 279 anime
 Year 2002: 265 anime
 Year 2003: 275 anime
-Year 2004: 293 anime
+Year 2004: 172 anime
 Year 2005: 338 anime
-Year 2006: 246 anime
+Year 2006: 417 anime
 Year 2007: 406 anime
 Year 2008: 407 anime
 Year 2009: 505 anime
