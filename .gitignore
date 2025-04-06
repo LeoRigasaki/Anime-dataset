@@ -8,3 +8,5 @@ __pycache__/
 .Python
 env/
 
+#Files
+*.csv
