@@ -62,8 +62,11 @@ jobs:
           git config --local user.email "${{ github.actor }}@users.noreply.github.com"
           git config --local user.name "${{ github.actor }}"
           
-          # Stage all changes in data/raw and missing_data_report.txt
-          git add data/raw/*.csv data/missing_data_report.txt
+          # Tell git about deleted files
+          git add --all data/raw/
+          
+          # Also add the missing data report
+          git add data/missing_data_report.txt
           
           # Check if there are changes to commit
           if git diff --staged --quiet; then
