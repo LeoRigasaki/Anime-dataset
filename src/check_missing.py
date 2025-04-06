@@ -56,6 +56,13 @@ def main():
                     f.write(f"Year {year}: No data found\n")
                 elif yearly_counts[year] < 100:  # Assuming less than 100 anime per year is suspicious
                     f.write(f"Year {year}: Only {yearly_counts[year]} anime (possibly incomplete)\n")
+                    
+            # Add information about the current data file
+            f.write("\nCurrent Data File:\n")
+            f.write("----------------\n")
+            f.write(f"Filename: {os.path.basename(latest_file)}\n")
+            f.write(f"File date: {os.path.basename(latest_file).split('_')[2].split('.')[0]}\n")
+            f.write(f"File size: {os.path.getsize(latest_file)} bytes\n")
 
         print("Report generated: data/missing_data_report.txt")
         

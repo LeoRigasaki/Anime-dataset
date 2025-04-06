@@ -4,6 +4,7 @@ import requests
 import pandas as pd
 from datetime import datetime
 import time
+import glob
 
 # Load environment variables
 load_dotenv()
@@ -99,29 +100,25 @@ def process_anime_data(raw_data):
     
     return processed_data
 
-def clean_old_files(folder='data/raw'):
-    """Clean old anime seasonal CSV files."""
-    print(f"Cleaning old files in {folder}")
+def clean_old_files(keep_file_path, folder='data/raw'):
+    """Remove all anime seasonal CSV files except the one we just created"""
+    print(f"Cleaning old files in {folder}, keeping {os.path.basename(keep_file_path)}")
     if os.path.exists(folder):
-        files = os.listdir(folder)
-        print(f"Found {len(files)} files in directory")
-        for file in files:
-            if file.startswith('anime_seasonal_') and file.endswith('.csv'):
-                file_path = os.path.join(folder, file)
+        files = glob.glob(os.path.join(folder, 'anime_seasonal_*.csv'))
+        print(f"Found {len(files)} seasonal anime files in directory")
+        for file_path in files:
+            if file_path != keep_file_path:  # Keep the newly created file
                 try:
-                    print(f"Attempting to remove: {file}")
+                    print(f"Removing old file: {os.path.basename(file_path)}")
                     os.remove(file_path)
-                    print(f"Successfully removed: {file}")
+                    print(f"Successfully removed: {os.path.basename(file_path)}")
                 except Exception as e:
-                    print(f"Error removing {file}: {e}")
+                    print(f"Error removing {file_path}: {e}")
     else:
         print(f"Directory {folder} does not exist")
 
 def save_data(data, folder='data/raw'):
     """Save data to CSV and ensure the file exists."""
-    # Clean old files first
-    clean_old_files(folder)
-    
     # Create DataFrame
     df = pd.DataFrame(data)
     
@@ -144,16 +141,21 @@ def save_data(data, folder='data/raw'):
             print(f"File created successfully. Size: {file_size} bytes")
             if file_size == 0:
                 print("Warning: File is empty!")
+                return None
+            
+            # Only clean old files if the new file was successfully created
+            clean_old_files(filename, folder)
+            
+            return filename
         else:
             print("Warning: File was not created!")
-        
-        return filename
+            return None
     except Exception as e:
         print(f"Error saving data: {e}")
         raise
 
 def main():
-    print("Starting historical anime data collection...")
+    print("Starting anime data collection...")
     print(f"Using Client ID: {CLIENT_ID[:5]}..." if CLIENT_ID else "No Client ID found!")
     
     all_seasons = get_all_seasons()
@@ -179,15 +181,16 @@ def main():
         print("Saving data...")
         filename = save_data(processed_data)
         
-        # Print summary statistics
-        df = pd.read_csv(filename)
-        print("\nCollection Summary:")
-        print(f"Total unique anime collected: {len(df)}")
-        print(f"Unique genres: {len(set(';'.join(df['genres'].dropna()).split(';')))}")
-        print(f"Unique studios: {len(set(';'.join(df['studios'].dropna()).split(';')))}")
-        print(f"Date range: {df['start_date'].min()} to {df['start_date'].max()}")
-        print(f"Average score: {df['score'].mean():.2f}")
-        print(f"Data saved to: {filename}")
+        if filename:
+            # Print summary statistics
+            df = pd.read_csv(filename)
+            print("\nCollection Summary:")
+            print(f"Total unique anime collected: {len(df)}")
+            print(f"Unique genres: {len(set(';'.join(df['genres'].dropna()).split(';')))}")
+            print(f"Unique studios: {len(set(';'.join(df['studios'].dropna()).split(';')))}")
+            print(f"Date range: {df['start_date'].min()} to {df['start_date'].max()}")
+            print(f"Average score: {df['score'].mean():.2f}")
+            print(f"Data saved to: {filename}")
 
 if __name__ == "__main__":
     main()

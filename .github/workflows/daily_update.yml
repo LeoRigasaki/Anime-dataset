@@ -30,10 +30,9 @@ jobs:
           echo "CURRENT_DATE=$(date -u +'%Y%m%d')" >> $GITHUB_ENV
           echo "Using UTC date: ${{ env.CURRENT_DATE }}"
       
-      - name: Clean old files
+      - name: Check data directory
         run: |
-          echo "Cleaning old CSV files..."
-          rm -f data/raw/anime_seasonal_*.csv
+          mkdir -p data/raw
           echo "Current contents of data/raw:"
           ls -la data/raw/ || echo "Directory is empty"
       
