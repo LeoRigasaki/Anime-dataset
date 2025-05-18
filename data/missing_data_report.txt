@@ -43,9 +43,9 @@ Year 1999: 211 anime
 Year 2000: 193 anime
 Year 2001: 280 anime
 Year 2002: 266 anime
-Year 2003: 277 anime
+Year 2003: 278 anime
 Year 2004: 293 anime
-Year 2005: 340 anime
+Year 2005: 339 anime
 Year 2006: 418 anime
 Year 2007: 406 anime
 Year 2008: 409 anime
@@ -87,6 +87,6 @@ Year 1984: Only 99 anime (possibly incomplete)
 
 Current Data File:
 ----------------
-Filename: anime_seasonal_20250517.csv
-File date: 20250517
-File size: 12046564 bytes
+Filename: anime_seasonal_20250518.csv
+File date: 20250518
+File size: 12047139 bytes
