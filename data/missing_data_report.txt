@@ -87,6 +87,6 @@ Year 1984: Only 99 anime (possibly incomplete)
 
 Current Data File:
 ----------------
-Filename: anime_seasonal_20250518.csv
-File date: 20250518
-File size: 12047139 bytes
+Filename: anime_seasonal_20250519.csv
+File date: 20250519
+File size: 12047193 bytes
