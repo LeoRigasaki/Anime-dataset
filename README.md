@@ -7,8 +7,11 @@ A daily-updated collection of anime data from MyAnimeList.
   - `raw/`: Raw data collected from MyAnimeList API
 - `docs/`: Documentation and data dictionary
 - `src/`: Source code
-  - `mal_api.py`: MyAnimeList API interaction
   - `check_missing.py`: Data validation script
+  - `anilist_api.py`: AniList API interaction
+  - `check_missing.py`: Data validation script
+  - `jikan_api.py`: Jikan API interaction
+  - `mal_api.py`: MyAnimeList API interaction
   - `test.py`: Testing utilities
 
 ## Updates
