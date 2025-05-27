@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import time
 import os
 import json
+import glob
 
 # API endpoints
 ANILIST_GRAPHQL_URL = 'https://graphql.anilist.co'
@@ -37,7 +38,7 @@ def make_graphql_request(query, variables=None):
         print(f"Error making GraphQL request: {e}")
         return None
 
-def get_all_seasons(start_year=1970):
+def get_all_seasons(start_year=2000):
     """Generate all seasons to fetch."""
     current_year = datetime.now().year
     seasons = ['WINTER', 'SPRING', 'SUMMER', 'FALL']
@@ -474,6 +475,23 @@ def process_anilist_seasonal_data(raw_data):
     
     return processed_data
 
+def clean_old_files(keep_file_path, folder='data/raw'):
+    """Remove all AniList seasonal CSV files except the one we just created"""
+    print(f"Cleaning old AniList files in {folder}, keeping {os.path.basename(keep_file_path)}")
+    if os.path.exists(folder):
+        files = glob.glob(os.path.join(folder, 'anilist_seasonal_*.csv'))
+        print(f"Found {len(files)} AniList seasonal files in directory")
+        for file_path in files:
+            if file_path != keep_file_path:  # Keep the newly created file
+                try:
+                    print(f"Removing old file: {os.path.basename(file_path)}")
+                    os.remove(file_path)
+                    print(f"Successfully removed: {os.path.basename(file_path)}")
+                except Exception as e:
+                    print(f"Error removing {file_path}: {e}")
+    else:
+        print(f"Directory {folder} does not exist")
+
 def save_combined_data(data, folder='data/raw'):
     """Save combined seasonal AniList data to CSV."""
     if not data:
@@ -498,6 +516,13 @@ def save_combined_data(data, folder='data/raw'):
         if os.path.exists(filename):
             file_size = os.path.getsize(filename)
             print(f"File created successfully. Size: {file_size} bytes, Entries: {len(df)}")
+            if file_size == 0:
+                print("Warning: File is empty!")
+                return None
+            
+            # Only clean old files if the new file was successfully created
+            clean_old_files(filename, folder)
+            
             return filename
         else:
             print("Warning: File was not created!")
@@ -512,7 +537,34 @@ def main():
     print("Starting combined seasonal anime + AniList data collection...")
     
     # Get seasons to fetch (adjust range as needed)
-    all_seasons = get_all_seasons(start_year=1970)  # Start from 2010 for better data quality
+    all_seasons = get_all_seasons(start_year=2010)  # Start from 2010 for better data quality
+    all_anime_data = []
+    unique_anime_ids = set()
+    
+    print(f"Will collect data for {len(all_seasons)} seasons from AniList...")
+    
+    for i, (year, season) in enumerate(all_seasons):
+        print(f"\n[{i+1}/{len(all_seasons)}] Processing {season} {year}")
+        
+        seasonal_data = fetch_seasonal_anime_anilist(year, season)
+        
+        # Add only unique anime
+        for anime in seasonal_data:
+            anime_id = anime.get('id')
+            if anime_id and anime_id not in unique_anime_ids:
+                all_anime_data.append(anime)
+                unique_anime_ids.add(anime_id)
+        
+        # Rate limiting between seasons
+        time.sleep(2)
+        
+def main():
+    start_time = time.time()
+    print("Starting AniList seasonal anime data collection...")
+    print(f"Using AniList GraphQL API: {ANILIST_GRAPHQL_URL}")
+    
+    # Get seasons to fetch (adjust range as needed)
+    all_seasons = get_all_seasons(start_year=1970)
     all_anime_data = []
     unique_anime_ids = set()
     
@@ -545,7 +597,7 @@ def main():
         if filename:
             # Print comprehensive summary statistics
             df = pd.DataFrame(processed_data)
-            print(f"\n=== AniList Seasonal Collection Summary ===")
+            print(f"\n=== AniList Collection Summary ===")
             print(f"Total unique anime collected: {len(df)}")
             print(f"Unique genres: {len(set(';'.join(df['genres'].dropna()).split(';')))}")
             print(f"Unique studios: {len(set(';'.join(df['studios'].dropna()).split(';')))}")

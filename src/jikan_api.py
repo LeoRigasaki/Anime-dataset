@@ -4,11 +4,12 @@ from datetime import datetime
 import time
 import os
 import json
+import glob
 
 # Jikan API v4 endpoint
 JIKAN_BASE_URL = 'https://api.jikan.moe/v4'
 
-def get_all_seasons(start_year=2000):
+def get_all_seasons(start_year=1970):
     """Generate all seasons from start_year to current year."""
     current_year = datetime.now().year
     seasons = ['winter', 'spring', 'summer', 'fall']
@@ -138,6 +139,16 @@ def process_jikan_anime_data(raw_data, fetch_individual_stats=True, max_individu
             # Rate limiting between individual requests
             time.sleep(1)
         
+        # Handle duration extraction safely
+        duration_str = anime.get('duration', '')
+        duration = 0
+        if duration_str:
+            # Extract numeric part from duration string
+            import re
+            duration_match = re.search(r'(\d+)', duration_str)
+            if duration_match:
+                duration = int(duration_match.group(1))
+        
         # Create processed anime entry
         anime_info = {
             'anime_id': mal_id,
@@ -146,7 +157,7 @@ def process_jikan_anime_data(raw_data, fetch_individual_stats=True, max_individu
             'japanese_title': japanese_title,
             'type': anime.get('type', ''),
             'episodes': anime.get('episodes', 0),
-            'duration': anime.get('duration', '').replace(' per ep', '').replace(' min', '') or 0,
+            'duration': duration,
             'status': anime.get('status', ''),
             'source': anime.get('source', ''),
             'season': f"{anime.get('season', '')} {anime.get('year', '')}".strip(),
@@ -188,6 +199,23 @@ def process_jikan_anime_data(raw_data, fetch_individual_stats=True, max_individu
     print(f"Made {individual_requests_made} individual statistics requests")
     return processed_data
 
+def clean_old_files(keep_file_path, folder='data/raw'):
+    """Remove all Jikan seasonal CSV files except the one we just created"""
+    print(f"Cleaning old Jikan files in {folder}, keeping {os.path.basename(keep_file_path)}")
+    if os.path.exists(folder):
+        files = glob.glob(os.path.join(folder, 'jikan_seasonal_*.csv'))
+        print(f"Found {len(files)} Jikan seasonal files in directory")
+        for file_path in files:
+            if file_path != keep_file_path:  # Keep the newly created file
+                try:
+                    print(f"Removing old file: {os.path.basename(file_path)}")
+                    os.remove(file_path)
+                    print(f"Successfully removed: {os.path.basename(file_path)}")
+                except Exception as e:
+                    print(f"Error removing {file_path}: {e}")
+    else:
+        print(f"Directory {folder} does not exist")
+
 def save_jikan_data(data, folder='data/raw'):
     """Save Jikan data to CSV."""
     if not data:
@@ -197,8 +225,9 @@ def save_jikan_data(data, folder='data/raw'):
     # Create DataFrame
     df = pd.DataFrame(data)
     
-    # Generate filename with UTC date
+    # Generate filename with UTC date to match GitHub Actions
     current_date = datetime.utcnow().strftime('%Y%m%d')
+    print(f"Using UTC date for filename: {current_date}")
     filename = f'{folder}/jikan_seasonal_{current_date}.csv'
     
     # Create folder if it doesn't exist
@@ -212,6 +241,13 @@ def save_jikan_data(data, folder='data/raw'):
         if os.path.exists(filename):
             file_size = os.path.getsize(filename)
             print(f"File created successfully. Size: {file_size} bytes, Entries: {len(df)}")
+            if file_size == 0:
+                print("Warning: File is empty!")
+                return None
+            
+            # Only clean old files if the new file was successfully created
+            clean_old_files(filename, folder)
+            
             return filename
         else:
             print("Warning: File was not created!")
@@ -224,6 +260,7 @@ def save_jikan_data(data, folder='data/raw'):
 def main():
     start_time = time.time()
     print("Starting Jikan seasonal anime data collection...")
+    print(f"Using Jikan API: {JIKAN_BASE_URL}")
     
     # Get all seasons (you can adjust the start year)
     all_seasons = get_all_seasons(start_year=1970)  # Starting from 2020 to manage API limits
@@ -278,7 +315,8 @@ def main():
             print(f"Total watching: {df['watching'].sum():,}")
             print(f"Total completed: {df['completed'].sum():,}")
             print(f"Total plan to watch: {df['plan_to_watch'].sum():,}")
-            print(f"Average members per anime: {df[df['members'] > 0]['members'].mean():.0f}")
+            if len(df[df['members'] > 0]) > 0:
+                print(f"Average members per anime: {df[df['members'] > 0]['members'].mean():.0f}")
             
             print(f"\nData saved to: {filename}")
     
