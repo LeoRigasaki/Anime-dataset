@@ -1,0 +1,89 @@
+name: Daily Jikan Data Update
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Run at 2 AM UTC to avoid conflicts with main update
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  update-jikan-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Set current date
+        run: |
+          echo "CURRENT_DATE=$(date -u +'%Y%m%d')" >> $GITHUB_ENV
+          echo "Using UTC date: ${{ env.CURRENT_DATE }}"
+      
+      - name: Check data directory
+        run: |
+          mkdir -p data/raw
+          echo "Current contents of data/raw:"
+          ls -la data/raw/ || echo "Directory is empty"
+      
+      - name: Run Jikan data collection
+        id: jikan_update_attempt
+        run: |
+          echo "Starting Jikan data collection..."
+          python -u src/jikan_api.py
+          echo "Running check missing..."
+          python -u src/check_missing.py
+      
+      - name: Debug After Jikan Collection
+        run: |
+          echo "Files in data/raw after Jikan collection:"
+          ls -la data/raw/
+          
+          expected_file="data/raw/jikan_seasonal_${{ env.CURRENT_DATE }}.csv"
+          if [ -f "$expected_file" ]; then
+            echo "Found new Jikan file: $expected_file"
+            wc -l "$expected_file"
+          fi
+
+      - name: Commit Jikan Changes
+        run: |
+          git config --local user.email "${{ github.actor }}@users.noreply.github.com"
+          git config --local user.name "${{ github.actor }}"
+          
+          # Tell git about deleted files
+          git add --all data/raw/
+          
+          # Also add the missing data report
+          git add data/missing_data_report.txt
+          
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 0
+          else
+            echo "Changes detected, committing..."
+            git commit -m "data: Update Jikan anime data for $(date +'%Y-%m-%d')"
+            git push origin ${GITHUB_REF#refs/heads/}
+          fi
+
+      - name: Create Issue on Failure
+        if: failure()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Jikan Data Update Failed',
+              body: `The Jikan anime data update workflow failed on ${new Date().toISOString()}\n\nPlease check the [workflow logs](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for more details.`
+            })
