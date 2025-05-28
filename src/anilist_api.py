@@ -376,7 +376,7 @@ def process_anilist_seasonal_data(raw_data):
         
         # Convert status distribution to dictionary
         status_stats = {}
-        for status_item in status_distribution:
+        for status_item in status_distribution or []:
             status = status_item.get('status', '').lower()
             amount = status_item.get('amount', 0)
             
