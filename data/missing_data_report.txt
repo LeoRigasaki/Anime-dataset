@@ -20,7 +20,7 @@ Year 1976: 45 anime
 Year 1977: 49 anime
 Year 1978: 55 anime
 Year 1979: 73 anime
-Year 1980: 74 anime
+Year 1980: 73 anime
 Year 1981: 87 anime
 Year 1982: 94 anime
 Year 1983: 98 anime
@@ -59,7 +59,7 @@ Year 2015: 862 anime
 Year 2016: 1017 anime
 Year 2017: 1046 anime
 Year 2018: 1018 anime
-Year 2019: 973 anime
+Year 2019: 974 anime
 Year 2020: 954 anime
 Year 2021: 1083 anime
 Year 2022: 1081 anime
@@ -79,13 +79,13 @@ Year 1976: Only 45 anime (possibly incomplete)
 Year 1977: Only 49 anime (possibly incomplete)
 Year 1978: Only 55 anime (possibly incomplete)
 Year 1979: Only 73 anime (possibly incomplete)
-Year 1980: Only 74 anime (possibly incomplete)
+Year 1980: Only 73 anime (possibly incomplete)
 Year 1981: Only 87 anime (possibly incomplete)
 Year 1982: Only 94 anime (possibly incomplete)
 Year 1983: Only 98 anime (possibly incomplete)
 
 Current Data File:
 ----------------
-Filename: anime_seasonal_20251009.csv
-File date: 20251009
-File size: 12293006 bytes
+Filename: anime_seasonal_20251010.csv
+File date: 20251010
+File size: 12292733 bytes
