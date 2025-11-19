@@ -466,6 +466,10 @@ def process_anilist_seasonal_data(raw_data):
             'site_url': anime.get('siteUrl', ''),
             'updated_at': anime.get('updatedAt', 0),
             
+            # Next Episode Data (Raw Timestamp for dynamic calculation)
+            'next_airing_episode_at': anime.get('nextAiringEpisode', {}).get('airingAt', 0) if anime.get('nextAiringEpisode') else 0,
+            'next_episode_number': anime.get('nextAiringEpisode', {}).get('episode', 0) if anime.get('nextAiringEpisode') else 0,
+            
             # Collection metadata
             'collected_at': datetime.now(timezone.utc).isoformat(),
             'data_source': 'anilist'
@@ -532,6 +536,33 @@ def save_combined_data(data, folder='data/raw'):
         print(f"Error saving combined data: {e}")
         raise
 
+def save_airing_data(data, folder='data/raw'):
+    """Save only airing/upcoming anime to a separate CSV."""
+    if not data:
+        return None
+        
+    # Filter for airing or upcoming anime
+    airing_data = [
+        anime for anime in data 
+        if anime.get('status') in ['RELEASING', 'NOT_YET_RELEASED']
+    ]
+    
+    if not airing_data:
+        print("No airing anime found to save.")
+        return None
+        
+    df = pd.DataFrame(airing_data)
+    filename = f'{folder}/airing_anime.csv'
+    
+    try:
+        # Always overwrite the airing file so it's the source of truth
+        df.to_csv(filename, index=False, encoding='utf-8')
+        print(f"Airing anime data saved to {filename} ({len(df)} entries)")
+        return filename
+    except Exception as e:
+        print(f"Error saving airing data: {e}")
+        return None
+
 def main():
     start_time = time.time()
     print("Starting combined seasonal anime + AniList data collection...")
@@ -564,7 +595,7 @@ def main():
     print(f"Using AniList GraphQL API: {ANILIST_GRAPHQL_URL}")
     
     # Get seasons to fetch (adjust range as needed)
-    all_seasons = get_all_seasons(start_year=1970)
+    all_seasons = get_all_seasons(start_year=2025)
     all_anime_data = []
     unique_anime_ids = set()
     
@@ -593,6 +624,9 @@ def main():
         
         print("Saving combined data...")
         filename = save_combined_data(processed_data)
+        
+        print("Saving airing data...")
+        save_airing_data(processed_data)
         
         if filename:
             # Print comprehensive summary statistics

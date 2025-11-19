@@ -2,6 +2,9 @@ import pandas as pd
 import sys
 from typing import List, Dict, Tuple
 from collections import Counter
+from datetime import datetime, timezone
+import os
+from schedule_manager import AnimeScheduleManager
 
 class AnimeRecommendationSystem:
     def __init__(self, csv_file_path: str):
@@ -9,6 +12,11 @@ class AnimeRecommendationSystem:
         try:
             self.df = pd.read_csv(csv_file_path)
             print(f"✅ Loaded {len(self.df)} anime from {csv_file_path}")
+            
+            # Initialize schedule manager
+            self.schedule_manager = AnimeScheduleManager()
+            self.airing_df = self.schedule_manager.airing_df
+                
             self._preprocess_data()
         except FileNotFoundError:
             print(f"❌ Error: Could not find file '{csv_file_path}'")
@@ -24,6 +32,20 @@ class AnimeRecommendationSystem:
         self.df['tags'] = self.df['tags'].fillna('')
         self.df['members'] = self.df['members'].fillna(0)
         self.df['score'] = self.df['score'].fillna(0)
+        
+        # Merge airing data if available
+        if self.airing_df is not None:
+            # Create a mapping of anime_id to next_airing_episode_at
+            airing_map = dict(zip(self.airing_df['anime_id'], self.airing_df['next_airing_episode_at']))
+            episode_map = dict(zip(self.airing_df['anime_id'], self.airing_df['next_episode_number']))
+            
+            self.df['next_airing_episode_at'] = self.df['anime_id'].map(airing_map).fillna(0)
+            self.df['next_episode_number'] = self.df['anime_id'].map(episode_map).fillna(0)
+        elif 'next_airing_episode_at' not in self.df.columns:
+            self.df['next_airing_episode_at'] = 0
+            self.df['next_episode_number'] = 0
+            
+        self.df['next_airing_episode_at'] = self.df['next_airing_episode_at'].fillna(0)
         
         # Create lowercase versions for matching
         self.df['title_lower'] = self.df['title'].str.lower()
@@ -58,7 +80,9 @@ class AnimeRecommendationSystem:
                 'type': anime.get('type', 'Unknown'),
                 'episodes': anime.get('episodes', 'Unknown'),
                 'genres': anime['genres'],
-                'tags': anime['tags']
+                'tags': anime['tags'],
+                'next_airing_at': anime.get('next_airing_episode_at', 0),
+                'next_episode_num': anime.get('next_episode_number', 0)
             })
         return results
     
@@ -92,6 +116,27 @@ class AnimeRecommendationSystem:
         target_title_words = set(str(target_anime['title']).lower().split())
         
         print(f"\n🎯 TARGET ANIME: {target_anime['title']}")
+        
+        # Display next episode info if available
+        # Display next episode info if available
+        next_airing = target_anime.get('next_airing_episode_at', 0)
+        if next_airing > 0:
+            countdown = self.schedule_manager.format_countdown(next_airing)
+            ep_num = int(target_anime.get('next_episode_number', 0))
+            ep_str = f"Ep {ep_num}" if ep_num > 0 else "Next Ep"
+            print(f"   📅 {ep_str}: {countdown}")
+            
+            # Predict completion for target
+            total_eps = target_anime.get('episodes')
+            if total_eps and pd.notna(total_eps):
+                try:
+                    total_eps = int(float(total_eps))
+                    completion_date = self.schedule_manager.predict_completion_date(next_airing, ep_num, total_eps)
+                    if completion_date:
+                        print(f"   🏁 Predicted Completion: {completion_date}")
+                except (ValueError, TypeError):
+                    pass
+
         print(f"📊 Genres ({len(target_genres)}): {', '.join(target_genres)}")
         print(f"🏷️  Tags ({len(target_tags)}): {', '.join(target_tags[:8])}{'...' if len(target_tags) > 8 else ''}")
         
@@ -191,6 +236,8 @@ class AnimeRecommendationSystem:
         else:
             return "📍 DECENT MATCH"
     
+            return "📍 DECENT MATCH"
+            
     def display_recommendations(self, recommendations: List[Dict], target_elements: int):
         """Display recommendations in a formatted way."""
         if not recommendations:
@@ -207,6 +254,25 @@ class AnimeRecommendationSystem:
             print(f"   \"{anime['title']}\"")
             print(f"   Score: {anime['score']} | Members: {int(anime['members']):,} | "
                   f"Type: {anime.get('type', 'Unknown')} ({anime.get('episodes', '?')} eps)")
+            
+            next_airing = anime.get('next_airing_episode_at', 0)
+            if next_airing > 0:
+                countdown = self.schedule_manager.format_countdown(next_airing)
+                ep_num = int(anime.get('next_episode_number', 0))
+                ep_str = f"Ep {ep_num}" if ep_num > 0 else "Next Ep"
+                print(f"   📅 {ep_str}: {countdown}")
+                
+                # Predict completion
+                total_eps = anime.get('episodes')
+                if total_eps and total_eps != 'Unknown' and total_eps != 'nan':
+                    try:
+                        total_eps = int(float(total_eps))
+                        completion_date = self.schedule_manager.predict_completion_date(next_airing, ep_num, total_eps)
+                        if completion_date:
+                            print(f"   🏁 Predicted Completion: {completion_date}")
+                    except (ValueError, TypeError):
+                        pass
+                
             print(f"   TOTAL SHARED: {rec['total_shared_elements']}/{target_elements} elements "
                   f"({rec['overall_match_pct']:.1f}%)")
             print(f"   Shared Genres ({len(rec['shared_genres'])}): [{', '.join(rec['shared_genres'])}]")
@@ -291,8 +357,16 @@ def main():
             
             for i, anime in enumerate(search_results):
                 print(f"{i+1}. \"{anime['title']}\"")
-                print(f"   Score: {anime['score']} | Members: {anime['members']:,} | "
+                print(f"   Score: {anime['score']} | Members: {int(anime['members']):,} | "
                       f"Type: {anime['type']} ({anime['episodes']} eps)")
+                
+                next_airing = anime.get('next_airing_at', 0)
+                if next_airing > 0:
+                    countdown = rec_system.schedule_manager.format_countdown(next_airing)
+                    ep_num = int(anime.get('next_episode_num', 0))
+                    ep_str = f"Ep {ep_num}" if ep_num > 0 else "Next Ep"
+                    print(f"   📅 {ep_str}: {countdown}")
+                    
                 print(f"   Genres: {anime['genres']}")
                 print()
             
