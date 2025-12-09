@@ -1,6 +1,7 @@
 """FastAPI backend for AnimeScheduleAgent."""
 import os
 import sys
+import re
 from contextlib import asynccontextmanager
 from typing import Optional
 from datetime import date, timedelta
@@ -35,6 +36,78 @@ def _get_current_season() -> tuple[str, int]:
         return "SUMMER", year
     else:
         return "FALL", year
+
+
+def _extract_anime_names_from_text(text: str) -> list[str]:
+    """
+    Extract potential anime titles from response text.
+    Looks for capitalized phrases that could be anime names.
+    """
+    # Pattern to find quoted text or capitalized multi-word phrases
+    patterns = [
+        r'"([^"]+)"',  # Quoted text
+        r"'([^']+)'",  # Single quoted text
+        r'\b([A-Z][A-Za-z0-9\s:!?\-]+(?:Season|Arc|Part|Movie|OVA|Special|TV|Film)\s*\d*)\b',  # Titles with keywords
+        r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b',  # Capitalized multi-word phrases
+    ]
+
+    potential_names = set()
+    for pattern in patterns:
+        matches = re.findall(pattern, text)
+        for match in matches:
+            # Clean up the match
+            name = match.strip()
+            # Filter out common false positives and short names
+            if len(name) > 3 and not name.lower().startswith(('http', 'www', 'the ')):
+                # Exclude common words that aren't anime
+                exclude_words = {'Winter', 'Spring', 'Summer', 'Fall', 'January', 'February', 'March',
+                                'April', 'May', 'June', 'July', 'August', 'September', 'October',
+                                'November', 'December', 'Today', 'Tomorrow', 'Next Week', 'This Week'}
+                if name not in exclude_words:
+                    potential_names.add(name)
+
+    return list(potential_names)
+
+
+def _search_and_enrich_anime(response_text: str, existing_anime: list[dict]) -> list[dict]:
+    """
+    Search for anime mentioned in response text and add them if not already present.
+    """
+    existing_ids = {anime.get('anime_id') for anime in existing_anime}
+    potential_names = _extract_anime_names_from_text(response_text)
+    enriched_anime = existing_anime.copy()
+
+    for name in potential_names:
+        try:
+            # Search for this anime
+            result = search_anime(name)
+
+            # If we got a result and it's not already in our list
+            if isinstance(result, dict) and result.get('anime_id'):
+                if result['anime_id'] not in existing_ids:
+                    # Add it to our enriched list
+                    anime_entry = {
+                        'anime_id': result['anime_id'],
+                        'title': result.get('title', name),
+                        'cover_image': result.get('cover_image'),
+                        'status': result.get('status'),
+                        'predicted_completion': result.get('predicted_completion'),
+                        'confidence': result.get('confidence'),
+                        'score': result.get('score'),
+                        'episodes': result.get('episodes'),
+                        'current_episode': result.get('current_episode'),
+                        'is_bingeable': result.get('is_bingeable')
+                    }
+                    # Remove None values
+                    anime_entry = {k: v for k, v in anime_entry.items() if v is not None}
+                    enriched_anime.append(anime_entry)
+                    existing_ids.add(result['anime_id'])
+        except Exception as e:
+            # If search fails for this name, just continue with others
+            print(f"Warning: Failed to search for '{name}': {e}")
+            continue
+
+    return enriched_anime
 
 
 @asynccontextmanager
@@ -77,6 +150,11 @@ class AnimeData(BaseModel):
     cover_image: Optional[str] = None
     status: Optional[str] = None
     predicted_completion: Optional[str] = None
+    confidence: Optional[str] = None
+    score: Optional[float] = None
+    episodes: Optional[int] = None
+    current_episode: Optional[int] = None
+    is_bingeable: Optional[bool] = None
 
 class QueryResponse(BaseModel):
     response: str
@@ -94,17 +172,23 @@ async def query_agent(request: QueryRequest):
     """Send a natural language query to the agent."""
     if not agent:
         raise HTTPException(status_code=503, detail="Agent not initialized. Check GOOGLE_API_KEY.")
-    
+
     if not request.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
-    
+
     try:
         response, anime_data = agent.query_with_data(request.query)
-        return QueryResponse(response=response, success=True, anime=anime_data)
+
+        # Enrich anime data by searching for anime names mentioned in the response
+        enriched_anime = _search_and_enrich_anime(response, anime_data)
+
+        return QueryResponse(response=response, success=True, anime=enriched_anime)
     except AttributeError:
         # Fallback if agent doesn't have new method
         response = agent.query(request.query)
-        return QueryResponse(response=response, success=True, anime=[])
+        # Still try to extract anime names from response
+        enriched_anime = _search_and_enrich_anime(response, [])
+        return QueryResponse(response=response, success=True, anime=enriched_anime)
     except Exception as e:
         return QueryResponse(response=f"Error: {str(e)}", success=False)
 

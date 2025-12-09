@@ -1,6 +1,17 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
+import { Calendar, Clock, Filter, PlayCircle, CheckCircle2, TrendingUp, X } from 'lucide-react'
+import { Card, CardContent } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 interface AnimeData {
   anime_id: number
@@ -8,6 +19,18 @@ interface AnimeData {
   cover_image?: string
   status?: string
   predicted_completion?: string
+  confidence?: string
+  score?: number
+  episodes?: number
+  current_episode?: number
+  is_bingeable?: boolean
+  confidence_reason?: string
+  days_until_complete?: number
+  next_episode?: {
+    number: number
+    airs_at?: string
+    airs_in_human?: string
+  }
 }
 
 interface Message {
@@ -27,6 +50,13 @@ interface Anime {
   cover_image?: string
   score?: number
   is_bingeable?: boolean
+  confidence_reason?: string
+  days_until_complete?: number
+  next_episode?: {
+    number: number
+    airs_at?: string
+    airs_in_human?: string
+  }
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -34,11 +64,12 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 const EXAMPLE_QUERIES = [
   "When will Solo Leveling Season 2 finish?",
   "What Fall 2025 anime can I binge by Christmas?",
-  "Is Frieren done airing?",
+  "Show me anime finishing this week",
 ]
 
 type Tab = 'chat' | 'browse'
-type Filter = 'bingeable' | 'all'
+type StatusFilter = 'all' | 'bingeable' | 'releasing' | 'finished' | 'upcoming'
+type SortOption = 'popularity' | 'completion' | 'score'
 
 export default function Home() {
   const [tab, setTab] = useState<Tab>('browse')
@@ -47,11 +78,12 @@ export default function Home() {
   const [loading, setLoading] = useState(false)
   const [apiStatus, setApiStatus] = useState<'checking' | 'online' | 'offline'>('checking')
   const [animeList, setAnimeList] = useState<Anime[]>([])
-  const [filter, setFilter] = useState<Filter>('bingeable')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [sortBy, setSortBy] = useState<SortOption>('popularity')
   const [seasonInfo, setSeasonInfo] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
-  // Check API health on mount
+  // Check API health
   useEffect(() => {
     fetch(`${API_URL}/health`)
       .then(res => res.json())
@@ -59,18 +91,17 @@ export default function Home() {
       .catch(() => setApiStatus('offline'))
   }, [])
 
-  // Load anime data when browse tab is active
+  // Load anime data
   useEffect(() => {
     if (tab === 'browse') {
       loadAnimeData()
     }
-  }, [tab, filter])
+  }, [tab])
 
   const loadAnimeData = async () => {
     setLoading(true)
     try {
-      const endpoint = filter === 'bingeable' ? '/anime/bingeable' : '/anime/seasonal'
-      const res = await fetch(`${API_URL}${endpoint}`)
+      const res = await fetch(`${API_URL}/anime/seasonal`)
       const data = await res.json()
       setAnimeList(data.anime || [])
       setSeasonInfo(data.season || '')
@@ -101,8 +132,8 @@ export default function Home() {
         body: JSON.stringify({ query }),
       })
       const data = await res.json()
-      setMessages(prev => [...prev, { 
-        role: 'assistant', 
+      setMessages(prev => [...prev, {
+        role: 'assistant',
         content: data.response || 'No response.',
         anime: data.anime || []
       }])
@@ -123,52 +154,207 @@ export default function Home() {
     return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
   }
 
-  const getStatusColor = (status: string) => {
+  const getStatusBadgeVariant = (status: string): "default" | "secondary" | "success" | "warning" => {
     switch (status) {
-      case 'FINISHED': return 'bg-green-500'
-      case 'RELEASING': return 'bg-blue-500'
-      case 'NOT_YET_RELEASED': return 'bg-yellow-500'
-      default: return 'bg-gray-500'
+      case 'FINISHED': return 'success'
+      case 'RELEASING': return 'default'
+      case 'NOT_YET_RELEASED': return 'warning'
+      default: return 'secondary'
     }
   }
 
-  return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col">
-      {/* Header */}
-      <header className="border-b border-gray-800 p-4">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-2xl">🎌</span>
-            <h1 className="text-xl font-semibold">AnimeScheduleAgent</h1>
-          </div>
-          <div className="flex items-center gap-4">
-            {/* Tabs */}
-            <div className="flex bg-gray-800 rounded-lg p-1">
-              <button
-                onClick={() => setTab('browse')}
-                className={`px-4 py-1.5 rounded-md text-sm font-medium transition ${
-                  tab === 'browse' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'
-                }`}
-              >
-                Browse
-              </button>
-              <button
-                onClick={() => setTab('chat')}
-                className={`px-4 py-1.5 rounded-md text-sm font-medium transition ${
-                  tab === 'chat' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'
-                }`}
-              >
-                Chat
-              </button>
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'FINISHED': return <CheckCircle2 className="w-3 h-3" />
+      case 'RELEASING': return <PlayCircle className="w-3 h-3" />
+      case 'NOT_YET_RELEASED': return <Clock className="w-3 h-3" />
+      default: return null
+    }
+  }
+
+  // Filter and sort anime
+  const filteredAnime = useMemo(() => {
+    let filtered = animeList
+
+    // Apply status filter
+    switch (statusFilter) {
+      case 'bingeable':
+        filtered = filtered.filter(a => a.is_bingeable || a.status === 'FINISHED')
+        break
+      case 'releasing':
+        filtered = filtered.filter(a => a.status === 'RELEASING')
+        break
+      case 'finished':
+        filtered = filtered.filter(a => a.status === 'FINISHED')
+        break
+      case 'upcoming':
+        filtered = filtered.filter(a => a.status === 'NOT_YET_RELEASED')
+        break
+    }
+
+    // Apply sorting
+    const sorted = [...filtered].sort((a, b) => {
+      switch (sortBy) {
+        case 'completion':
+          if (!a.predicted_completion) return 1
+          if (!b.predicted_completion) return -1
+          return a.predicted_completion.localeCompare(b.predicted_completion)
+        case 'score':
+          return (b.score || 0) - (a.score || 0)
+        default:
+          return 0 // Keep popularity order from API
+      }
+    })
+
+    return sorted
+  }, [animeList, statusFilter, sortBy])
+
+  // Anime Card Component
+  const AnimeCard = ({ anime }: { anime: Anime }) => (
+    <a
+      href={`https://anilist.co/anime/${anime.anime_id}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="block h-full"
+    >
+      <Card className="h-full overflow-hidden hover:ring-2 hover:ring-primary transition-all group">
+        {/* Cover Image */}
+        <div className="aspect-[2/3] relative bg-muted overflow-hidden">
+          {anime.cover_image ? (
+            <img
+              src={anime.cover_image}
+              alt={anime.title}
+              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+              onError={(e) => {
+                e.currentTarget.style.display = 'none'
+                const parent = e.currentTarget.parentElement
+                if (parent) {
+                  parent.innerHTML = '<div class="w-full h-full flex items-center justify-center text-muted-foreground text-xs">No Image</div>'
+                }
+              }}
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-muted-foreground text-xs">
+              No Image
             </div>
-            {/* Status */}
-            <div className="flex items-center gap-2 text-sm">
-              <span className={`w-2 h-2 rounded-full ${
-                apiStatus === 'online' ? 'bg-green-500' : apiStatus === 'offline' ? 'bg-red-500' : 'bg-yellow-500'
-              }`} />
-              <span className="text-gray-400">
-                {apiStatus === 'online' ? 'Connected' : apiStatus === 'offline' ? 'Offline' : 'Connecting...'}
-              </span>
+          )}
+
+          {/* Top Badges */}
+          <div className="absolute top-2 right-2 flex flex-col gap-1">
+            {anime.status && (
+              <Badge variant={getStatusBadgeVariant(anime.status)} className="flex items-center gap-1">
+                {getStatusIcon(anime.status)}
+                <span className="text-xs">
+                  {anime.status === 'FINISHED' ? 'Done' : anime.status === 'RELEASING' ? 'Airing' : 'Soon'}
+                </span>
+              </Badge>
+            )}
+            {anime.is_bingeable && (
+              <Badge variant="success" className="flex items-center gap-1">
+                <TrendingUp className="w-3 h-3" />
+                <span className="text-xs">Bingeable</span>
+              </Badge>
+            )}
+          </div>
+
+          {/* Score Badge */}
+          {anime.score && (
+            <div className="absolute bottom-2 left-2 bg-black/70 backdrop-blur-sm px-2 py-1 rounded text-xs font-semibold text-white">
+              ⭐ {anime.score}%
+            </div>
+          )}
+        </div>
+
+        {/* Info */}
+        <CardContent className="p-3 space-y-2">
+          <h3 className="font-semibold text-sm line-clamp-2 leading-tight">{anime.title}</h3>
+
+          {/* Episode Progress */}
+          {anime.episodes && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <PlayCircle className="w-3 h-3" />
+              <span>{anime.current_episode || anime.episodes}/{anime.episodes} eps</span>
+            </div>
+          )}
+
+          {/* Next Episode */}
+          {anime.next_episode && anime.status === 'RELEASING' && (
+            <div className="flex items-center gap-2 text-xs text-blue-400">
+              <Clock className="w-3 h-3" />
+              <span>Ep {anime.next_episode.number} in {anime.next_episode.airs_in_human}</span>
+            </div>
+          )}
+
+          {/* Completion Prediction */}
+          {anime.predicted_completion && anime.status !== 'FINISHED' && (
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-xs text-green-400">
+                <Calendar className="w-3 h-3" />
+                <span>Done: {formatDate(anime.predicted_completion)}</span>
+              </div>
+              {anime.confidence && (
+                <Badge variant="outline" className="text-xs">
+                  {anime.confidence} confidence
+                </Badge>
+              )}
+            </div>
+          )}
+
+          {/* Finished Badge */}
+          {anime.status === 'FINISHED' && (
+            <div className="flex items-center gap-2 text-xs text-green-400">
+              <CheckCircle2 className="w-3 h-3" />
+              <span>Ready to binge!</span>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </a>
+  )
+
+
+  return (
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      {/* Header */}
+      <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
+        <div className="container mx-auto px-4 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-3xl">🎌</span>
+              <div>
+                <h1 className="text-xl font-bold">AnimeScheduleAgent</h1>
+                <p className="text-xs text-muted-foreground">AI-Powered Anime Tracker</p>
+              </div>
+            </div>
+
+            {/* Tabs */}
+            <div className="flex items-center gap-4">
+              <div className="flex bg-muted rounded-lg p-1">
+                <Button
+                  variant={tab === 'browse' ? 'default' : 'ghost'}
+                  size="sm"
+                  onClick={() => setTab('browse')}
+                >
+                  Browse
+                </Button>
+                <Button
+                  variant={tab === 'chat' ? 'default' : 'ghost'}
+                  size="sm"
+                  onClick={() => setTab('chat')}
+                >
+                  Chat
+                </Button>
+              </div>
+
+              {/* Status Indicator */}
+              <div className="flex items-center gap-2 text-sm">
+                <span className={`w-2 h-2 rounded-full ${
+                  apiStatus === 'online' ? 'bg-green-500' : apiStatus === 'offline' ? 'bg-red-500' : 'bg-yellow-500'
+                }`} />
+                <span className="text-muted-foreground text-xs">
+                  {apiStatus === 'online' ? 'Connected' : apiStatus === 'offline' ? 'Offline' : 'Connecting...'}
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -176,101 +362,99 @@ export default function Home() {
 
       {/* Main Content */}
       {tab === 'browse' ? (
-        <main className="flex-1 p-4 overflow-y-auto">
-          <div className="max-w-6xl mx-auto">
-            {/* Filter bar */}
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h2 className="text-2xl font-bold">{seasonInfo || 'Loading...'}</h2>
-                <p className="text-gray-400 text-sm mt-1">
-                  {filter === 'bingeable' ? 'Anime you can binge (finished or finishing soon)' : 'All anime this season'}
-                </p>
+        <main className="flex-1 overflow-y-auto">
+          <div className="container mx-auto px-4 py-6">
+            {/* Filter Bar */}
+            <div className="mb-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold">{seasonInfo || 'Loading...'}</h2>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {filteredAnime.length} anime {statusFilter !== 'all' && `• ${statusFilter}`}
+                  </p>
+                </div>
+
+                <Button onClick={loadAnimeData} variant="outline" size="sm" disabled={loading}>
+                  {loading ? 'Loading...' : 'Refresh'}
+                </Button>
               </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setFilter('bingeable')}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
-                    filter === 'bingeable' ? 'bg-green-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                  }`}
+
+              {/* Filters */}
+              <div className="flex flex-wrap gap-3">
+                <div className="flex items-center gap-2">
+                  <Filter className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Filter:</span>
+                </div>
+
+                <Button
+                  variant={statusFilter === 'all' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setStatusFilter('all')}
                 >
-                  ✅ Bingeable
-                </button>
-                <button
-                  onClick={() => setFilter('all')}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
-                    filter === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                  }`}
+                  All Anime
+                </Button>
+                <Button
+                  variant={statusFilter === 'bingeable' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setStatusFilter('bingeable')}
                 >
-                  📺 All Anime
-                </button>
+                  <CheckCircle2 className="w-3 h-3 mr-1" />
+                  Bingeable
+                </Button>
+                <Button
+                  variant={statusFilter === 'releasing' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setStatusFilter('releasing')}
+                >
+                  <PlayCircle className="w-3 h-3 mr-1" />
+                  Airing Now
+                </Button>
+                <Button
+                  variant={statusFilter === 'finished' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setStatusFilter('finished')}
+                >
+                  Finished
+                </Button>
+                <Button
+                  variant={statusFilter === 'upcoming' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setStatusFilter('upcoming')}
+                >
+                  <Clock className="w-3 h-3 mr-1" />
+                  Upcoming
+                </Button>
+
+                <div className="ml-auto">
+                  <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortOption)}>
+                    <SelectTrigger className="w-[180px]">
+                      <SelectValue placeholder="Sort by" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="popularity">Popularity</SelectItem>
+                      <SelectItem value="completion">Completion Date</SelectItem>
+                      <SelectItem value="score">Rating</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </div>
 
             {/* Anime Grid */}
             {loading ? (
-              <div className="flex justify-center py-12">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+              <div className="flex-1 flex items-center justify-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+              </div>
+            ) : filteredAnime.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
+                <X className="w-16 h-16 mb-4 opacity-50" />
+                <p>No anime found with the selected filters</p>
               </div>
             ) : (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                {animeList.map((anime) => (
-                  <a
-                    href={`https://anilist.co/anime/${anime.anime_id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    key={anime.anime_id}
-                    className="bg-gray-900 rounded-lg overflow-hidden hover:ring-2 hover:ring-blue-500 transition group block"
-                  >
-                    {/* Cover Image */}
-                    <div className="aspect-[2/3] relative bg-gray-800">
-                      {anime.cover_image ? (
-                        <img
-                          src={anime.cover_image}
-                          alt={anime.title}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-gray-600">
-                          No Image
-                        </div>
-                      )}
-                      {/* Status badge */}
-                      <div className={`absolute top-2 right-2 px-2 py-0.5 rounded text-xs font-medium ${getStatusColor(anime.status)}`}>
-                        {anime.status === 'FINISHED' ? '✓ Done' : anime.status === 'RELEASING' ? 'Airing' : 'Soon'}
-                      </div>
-                      {/* Score */}
-                      {anime.score && (
-                        <div className="absolute bottom-2 left-2 bg-black/70 px-2 py-0.5 rounded text-xs">
-                          ⭐ {anime.score}%
-                        </div>
-                      )}
-                    </div>
-                    {/* Info */}
-                    <div className="p-3">
-                      <h3 className="font-medium text-sm line-clamp-2 mb-2">{anime.title}</h3>
-                      <div className="text-xs text-gray-400 space-y-1">
-                        {anime.episodes && (
-                          <p>{anime.current_episode || anime.episodes}/{anime.episodes} eps</p>
-                        )}
-                        {anime.predicted_completion && anime.status !== 'FINISHED' && (
-                          <p className="text-green-400">
-                            Done: {formatDate(anime.predicted_completion)}
-                            {anime.confidence && ` (${anime.confidence})`}
-                          </p>
-                        )}
-                        {anime.status === 'FINISHED' && (
-                          <p className="text-green-400">✅ Ready to binge!</p>
-                        )}
-                      </div>
-                    </div>
-                  </a>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4 pb-8">
+                {filteredAnime.map((anime) => (
+                  <AnimeCard key={anime.anime_id} anime={anime} />
                 ))}
-              </div>
-            )}
-
-            {!loading && animeList.length === 0 && (
-              <div className="text-center py-12 text-gray-400">
-                No anime found. Try refreshing or check if the backend is running.
               </div>
             )}
           </div>
@@ -278,90 +462,88 @@ export default function Home() {
       ) : (
         /* Chat Tab */
         <>
-          <main className="flex-1 overflow-y-auto p-4">
-            <div className="max-w-4xl mx-auto space-y-4">
+          <main className="flex-1 overflow-y-auto">
+            <div className="container mx-auto px-4 py-6 max-w-4xl">
               {messages.length === 0 ? (
-                <div className="text-center py-12">
-                  <p className="text-gray-400 mb-6">Ask me when anime will finish airing!</p>
+                <div className="text-center py-16">
+                  <h2 className="text-2xl font-bold mb-2">Ask me about anime schedules!</h2>
+                  <p className="text-muted-foreground mb-8">I can help you find when anime will finish airing</p>
                   <div className="flex flex-wrap justify-center gap-2">
                     {EXAMPLE_QUERIES.map((query, i) => (
-                      <button
+                      <Button
                         key={i}
+                        variant="outline"
+                        size="sm"
                         onClick={() => sendQuery(query)}
-                        className="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm text-gray-300 transition"
+                        disabled={loading || apiStatus === 'offline'}
                       >
                         {query}
-                      </button>
+                      </Button>
                     ))}
                   </div>
                 </div>
               ) : (
-                messages.map((msg, i) => (
-                  <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                    <div className={`max-w-[80%] rounded-2xl px-4 py-3 ${
-                      msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-100'
-                    }`}>
-                      <div className="response-text whitespace-pre-wrap">{msg.content}</div>
-                    </div>
-                    {/* Anime cards */}
-                    {msg.anime && msg.anime.length > 0 && (
-                      <div className="flex gap-3 mt-3 overflow-x-auto max-w-full pb-2">
-                        {msg.anime.slice(0, 5).map((anime) => (
-                          <a
-                            key={anime.anime_id}
-                            href={`https://anilist.co/anime/${anime.anime_id}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex-shrink-0 w-32 bg-gray-800 rounded-lg overflow-hidden hover:ring-2 hover:ring-blue-500 transition"
-                          >
-                            <div className="aspect-[2/3] bg-gray-700">
-                              {anime.cover_image && (
-                                <img src={anime.cover_image} alt={anime.title} className="w-full h-full object-cover" />
-                              )}
-                            </div>
-                            <div className="p-2">
-                              <p className="text-xs font-medium line-clamp-2">{anime.title}</p>
-                            </div>
-                          </a>
-                        ))}
+                <div className="space-y-4">
+                  {messages.map((msg, i) => (
+                    <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                      <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${
+                        msg.role === 'user'
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-muted text-foreground'
+                      }`}>
+                        <div className="response-text whitespace-pre-wrap text-sm">{msg.content}</div>
                       </div>
-                    )}
-                  </div>
-                ))
-              )}
-              {loading && (
-                <div className="flex justify-start">
-                  <div className="bg-gray-800 rounded-2xl px-4 py-3">
-                    <div className="flex gap-1">
-                      <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                      <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                      <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+
+                      {/* Anime cards in chat */}
+                      {msg.anime && msg.anime.length > 0 && (
+                        <div className="flex gap-3 mt-3 overflow-x-auto max-w-full pb-2">
+                          {msg.anime.map((anime) => (
+                            <div key={anime.anime_id} className="flex-shrink-0 w-40">
+                              <AnimeCard anime={anime as Anime} />
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  </div>
+                  ))}
+                  {loading && (
+                    <div className="flex justify-start">
+                      <div className="bg-muted rounded-2xl px-4 py-3">
+                        <div className="flex gap-1">
+                          <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                          <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                          <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <div ref={messagesEndRef} />
                 </div>
               )}
-              <div ref={messagesEndRef} />
             </div>
           </main>
 
-          <footer className="border-t border-gray-800 p-4">
-            <form onSubmit={handleSubmit} className="max-w-4xl mx-auto flex gap-3">
-              <input
-                type="text"
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                placeholder="Ask about anime schedules..."
-                disabled={loading || apiStatus === 'offline'}
-                className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500 disabled:opacity-50"
-              />
-              <button
-                type="submit"
-                disabled={loading || !input.trim() || apiStatus === 'offline'}
-                className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:cursor-not-allowed px-6 py-3 rounded-xl font-medium transition"
-              >
-                Send
-              </button>
-            </form>
+          {/* Chat Input */}
+          <footer className="border-t border-border bg-card/50 backdrop-blur-sm">
+            <div className="container mx-auto px-4 py-4 max-w-4xl">
+              <form onSubmit={handleSubmit} className="flex gap-3">
+                <input
+                  type="text"
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  placeholder="Ask about anime schedules..."
+                  disabled={loading || apiStatus === 'offline'}
+                  className="flex-1 bg-background border border-input rounded-lg px-4 py-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+                />
+                <Button
+                  type="submit"
+                  disabled={loading || !input.trim() || apiStatus === 'offline'}
+                  size="lg"
+                >
+                  Send
+                </Button>
+              </form>
+            </div>
           </footer>
         </>
       )}

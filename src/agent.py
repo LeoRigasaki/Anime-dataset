@@ -191,23 +191,47 @@ class AnimeScheduleAgent:
                     if isinstance(data, list):
                         for item in data:
                             if isinstance(item, dict) and item.get('anime_id'):
-                                collected_anime.append({
+                                anime_entry = {
                                     'anime_id': item.get('anime_id'),
                                     'title': item.get('title', ''),
                                     'cover_image': item.get('cover_image'),
                                     'status': item.get('status'),
-                                    'predicted_completion': item.get('predicted_completion')
-                                })
+                                    'predicted_completion': item.get('predicted_completion'),
+                                    'confidence': item.get('confidence'),
+                                    'score': item.get('score'),
+                                    'episodes': item.get('episodes'),
+                                    'current_episode': item.get('current_episode'),
+                                    'is_bingeable': item.get('is_bingeable')
+                                }
+                                # Remove None values to keep response clean
+                                anime_entry = {k: v for k, v in anime_entry.items() if v is not None}
+                                # Only add if not already in collection (avoid duplicates)
+                                if not any(a.get('anime_id') == anime_entry['anime_id'] for a in collected_anime):
+                                    collected_anime.append(anime_entry)
                     elif isinstance(data, dict) and data.get('anime_id'):
-                        collected_anime.append({
+                        anime_entry = {
                             'anime_id': data.get('anime_id'),
                             'title': data.get('title', ''),
                             'cover_image': data.get('cover_image'),
                             'status': data.get('status'),
-                            'predicted_completion': data.get('predicted_completion')
-                        })
-                except:
-                    pass
+                            'predicted_completion': data.get('predicted_completion'),
+                            'confidence': data.get('confidence'),
+                            'score': data.get('score'),
+                            'episodes': data.get('episodes'),
+                            'current_episode': data.get('current_episode'),
+                            'is_bingeable': data.get('is_bingeable')
+                        }
+                        # Remove None values
+                        anime_entry = {k: v for k, v in anime_entry.items() if v is not None}
+                        # Only add if not already in collection
+                        if not any(a.get('anime_id') == anime_entry['anime_id'] for a in collected_anime):
+                            collected_anime.append(anime_entry)
+                except json.JSONDecodeError as e:
+                    # Log JSON parsing errors but continue
+                    print(f"Warning: Failed to parse tool result as JSON: {e}")
+                except Exception as e:
+                    # Log unexpected errors but continue
+                    print(f"Warning: Error collecting anime data: {e}")
                 
                 function_responses.append(
                     types.Part(

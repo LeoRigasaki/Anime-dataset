@@ -1,11 +1,28 @@
 """AniList GraphQL client for live anime data."""
+import asyncio
+import time
 import httpx
 from datetime import datetime, timezone
 from typing import Optional
 
 ANILIST_URL = "https://graphql.anilist.co"
 
-# GraphQL query for anime details with airing info
+# Rate limiting
+_last_request_time = 0
+_MIN_REQUEST_INTERVAL = 0.7  # ~85 requests/min max
+
+
+async def _rate_limit():
+    """Enforce rate limiting between API calls."""
+    global _last_request_time
+    now = time.time()
+    elapsed = now - _last_request_time
+    if elapsed < _MIN_REQUEST_INTERVAL:
+        await asyncio.sleep(_MIN_REQUEST_INTERVAL - elapsed)
+    _last_request_time = time.time()
+
+
+# GraphQL query for anime details with FULL airing info
 ANIME_QUERY = """
 query ($id: Int, $search: String) {
   Media(id: $id, search: $search, type: ANIME) {
@@ -14,6 +31,9 @@ query ($id: Int, $search: String) {
     status
     episodes
     nextAiringEpisode { episode airingAt timeUntilAiring }
+    airingSchedule(notYetAired: true, perPage: 25) {
+      nodes { episode airingAt }
+    }
     startDate { year month day }
     endDate { year month day }
     season
@@ -38,6 +58,9 @@ query ($season: MediaSeason, $year: Int, $page: Int) {
       status
       episodes
       nextAiringEpisode { episode airingAt timeUntilAiring }
+      airingSchedule(notYetAired: true, perPage: 25) {
+        nodes { episode airingAt }
+      }
       startDate { year month day }
       endDate { year month day }
       averageScore
@@ -77,6 +100,7 @@ def _parse_date(date_obj: Optional[dict]) -> Optional[str]:
 
 async def search_anime_live(search: str) -> Optional[dict]:
     """Search for anime by title using AniList API."""
+    await _rate_limit()
     async with httpx.AsyncClient(timeout=10.0) as client:
         try:
             resp = await client.post(
@@ -95,6 +119,7 @@ async def search_anime_live(search: str) -> Optional[dict]:
 
 async def get_anime_by_id(anime_id: int) -> Optional[dict]:
     """Get anime details by AniList ID."""
+    await _rate_limit()
     async with httpx.AsyncClient(timeout=10.0) as client:
         try:
             resp = await client.post(
@@ -122,6 +147,7 @@ async def get_seasonal_anime(season: str, year: int) -> list[dict]:
     page = 1
     async with httpx.AsyncClient(timeout=15.0) as client:
         while True:
+            await _rate_limit()
             try:
                 resp = await client.post(
                     ANILIST_URL,
@@ -155,12 +181,41 @@ def _transform_media(media: dict) -> dict:
     
     next_ep = media.get("nextAiringEpisode")
     next_episode_info = None
+    next_airing_at = None
+    
     if next_ep:
+        next_airing_at = next_ep.get("airingAt")
         next_episode_info = {
             "number": next_ep.get("episode"),
-            "airs_at": datetime.fromtimestamp(next_ep["airingAt"], tz=timezone.utc).isoformat() if next_ep.get("airingAt") else None,
-            "airs_in_human": _format_countdown(next_ep.get("timeUntilAiring", 0))
+            "airs_at": datetime.fromtimestamp(next_ep["airingAt"], tz=timezone.utc).isoformat() if next_airing_at else None,
+            "airs_in_human": _format_countdown(next_ep.get("timeUntilAiring", 0)),
+            "airs_at_timestamp": next_airing_at
         }
+    
+    # Extract full airing schedule if available
+    airing_schedule = media.get("airingSchedule", {}).get("nodes", [])
+    last_scheduled_episode = None
+    predicted_end_from_schedule = None
+    full_schedule = []
+
+    if airing_schedule:
+        # Sort by episode number to get chronological schedule
+        sorted_schedule = sorted(airing_schedule, key=lambda x: x.get("episode", 0))
+
+        # Build full schedule with readable dates
+        for ep in sorted_schedule:
+            if ep.get("episode") and ep.get("airingAt"):
+                full_schedule.append({
+                    "episode": ep["episode"],
+                    "airs_at": datetime.fromtimestamp(ep["airingAt"], tz=timezone.utc).strftime("%Y-%m-%d"),
+                    "airs_at_timestamp": ep["airingAt"]
+                })
+
+        # Get the last scheduled episode (highest episode number)
+        if full_schedule:
+            last_ep = full_schedule[-1]
+            last_scheduled_episode = last_ep["episode"]
+            predicted_end_from_schedule = last_ep["airs_at"]
     
     studios = media.get("studios", {}).get("nodes", [])
     studio_names = [s["name"] for s in studios if s.get("name")]
@@ -177,6 +232,7 @@ def _transform_media(media: dict) -> dict:
         "episodes": media.get("episodes"),
         "current_episode": (next_ep["episode"] - 1) if next_ep and next_ep.get("episode") else media.get("episodes"),
         "next_episode": next_episode_info,
+        "next_airing_at": next_airing_at,  # Unix timestamp for calculations
         "start_date": _parse_date(media.get("startDate")),
         "end_date": _parse_date(media.get("endDate")),
         "season": media.get("season"),
@@ -185,5 +241,9 @@ def _transform_media(media: dict) -> dict:
         "score": media.get("averageScore"),
         "studios": studio_names,
         "cover_image": cover_image,
-        "banner_image": media.get("bannerImage")
+        "banner_image": media.get("bannerImage"),
+        # New fields for better predictions
+        "last_scheduled_episode": last_scheduled_episode,
+        "predicted_end_from_schedule": predicted_end_from_schedule,
+        "airing_schedule": full_schedule,  # Full episode schedule
     }
