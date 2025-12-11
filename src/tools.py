@@ -3,9 +3,10 @@ import asyncio
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
+from collections import defaultdict
 import pandas as pd
 
-from src.anilist_client import search_anime_live, get_anime_by_id, get_seasonal_anime
+from src.anilist_client import search_anime_live, get_anime_by_id, get_seasonal_anime, get_weekly_airing_schedule
 
 # Path to data directory (relative to project root)
 DATA_DIR = Path(__file__).parent.parent / "data" / "raw"
@@ -34,6 +35,88 @@ def _run_async(coro):
     with concurrent.futures.ThreadPoolExecutor() as pool:
         future = pool.submit(run_in_thread)
         return future.result()
+
+
+def get_week_range(weeks_offset: int = 0) -> tuple[int, int]:
+    """
+    Get start and end timestamps for a week.
+
+    Args:
+        weeks_offset: Number of weeks to offset (0 = current week, 1 = next week, -1 = last week)
+
+    Returns:
+        Tuple of (start_timestamp, end_timestamp)
+    """
+    now = datetime.now(timezone.utc)
+    # Start of week (Monday at 00:00)
+    start_of_week = now - timedelta(days=now.weekday())
+    start_of_week = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Apply offset
+    start_of_week = start_of_week + timedelta(weeks=weeks_offset)
+    end_of_week = start_of_week + timedelta(days=7)
+
+    return int(start_of_week.timestamp()), int(end_of_week.timestamp())
+
+
+def get_day_range(days_offset: int = 0) -> tuple[int, int]:
+    """
+    Get start and end timestamps for a specific day.
+
+    Args:
+        days_offset: Number of days to offset (0 = today, 1 = tomorrow, -1 = yesterday)
+
+    Returns:
+        Tuple of (start_timestamp, end_timestamp)
+    """
+    now = datetime.now(timezone.utc)
+    target_day = now + timedelta(days=days_offset)
+    start_of_day = target_day.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_day = start_of_day + timedelta(days=1)
+
+    return int(start_of_day.timestamp()), int(end_of_day.timestamp())
+
+
+def group_schedules_by_day(schedules: list[dict]) -> dict[str, list[dict]]:
+    """
+    Group airing schedules by day of week.
+
+    Args:
+        schedules: List of schedule items from get_weekly_airing_schedule
+
+    Returns:
+        Dict with day names as keys and lists of schedules as values
+    """
+    schedule_by_day = defaultdict(list)
+
+    for schedule in schedules:
+        # Convert timestamp to day name
+        airing_time = datetime.fromtimestamp(schedule['airing_at'], tz=timezone.utc)
+        day_name = airing_time.strftime('%A').upper()  # MONDAY, TUESDAY, etc.
+
+        # Determine if it's airing soon or already aired
+        time_until = schedule['time_until_airing']
+        if time_until < 0:
+            airing_status = 'aired'
+        elif time_until < 3600:  # Less than 1 hour
+            airing_status = 'airing_soon'
+        elif time_until < 86400:  # Less than 24 hours
+            airing_status = 'airing_today'
+        else:
+            airing_status = 'upcoming'
+
+        schedule_by_day[day_name].append({
+            **schedule,
+            'airing_status': airing_status,
+            'airing_time': airing_time.strftime('%I:%M %p'),
+            'airing_date': airing_time.strftime('%Y-%m-%d')
+        })
+
+    # Sort each day's schedules by time
+    for day in schedule_by_day:
+        schedule_by_day[day].sort(key=lambda x: x['airing_at'])
+
+    return dict(schedule_by_day)
 
 
 def _load_latest_csv(pattern: str) -> Optional[pd.DataFrame]:
@@ -346,8 +429,40 @@ def get_bingeable_anime(season: str, year: int, by_date: Optional[str] = None) -
     
     # Sort by completion date
     bingeable.sort(key=lambda x: x.get("predicted_completion") or "9999-12-31")
-    
+
     return bingeable
+
+
+def get_weekly_schedule(weeks_offset: int = 0) -> dict:
+    """
+    Get all anime episodes airing in a specific week, grouped by day (AniChart-style).
+
+    Args:
+        weeks_offset: Number of weeks to offset (0 = current week, 1 = next week, -1 = last week)
+
+    Returns:
+        Dict with week info and schedule grouped by day
+    """
+    start_time, end_time = get_week_range(weeks_offset)
+
+    # Fetch airing schedules
+    schedules = _run_async(get_weekly_airing_schedule(start_time, end_time))
+
+    # Group by day
+    schedule_by_day = group_schedules_by_day(schedules)
+
+    # Calculate week dates
+    start_date = datetime.fromtimestamp(start_time, tz=timezone.utc)
+    end_date = datetime.fromtimestamp(end_time, tz=timezone.utc)
+
+    return {
+        "week_start": start_date.strftime("%Y-%m-%d"),
+        "week_end": end_date.strftime("%Y-%m-%d"),
+        "week_label": f"{start_date.strftime('%b %d')} - {end_date.strftime('%b %d, %Y')}",
+        "total_schedules": len(schedules),
+        "schedule": schedule_by_day,
+        "days_with_anime": list(schedule_by_day.keys())
+    }
 
 
 # Tool definitions for Gemini

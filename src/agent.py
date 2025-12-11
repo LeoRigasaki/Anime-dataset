@@ -66,7 +66,8 @@ class AnimeScheduleAgent:
             raise ValueError("GOOGLE_API_KEY required. Set in .env or pass to constructor.")
         
         self.client = genai.Client(api_key=self.api_key)
-        self.model = "gemini-2.0-flash"
+        # Model with function calling support (from Gemini docs)
+        self.model = "gemini-2.5-flash"  # Stable, fast, function calling supported
         
         # Convert tool definitions to Gemini format
         self.tools = types.Tool(

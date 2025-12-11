@@ -136,6 +136,110 @@ async def get_anime_by_id(anime_id: int) -> Optional[dict]:
             return {"error": str(e)}
 
 
+async def get_weekly_airing_schedule(start_timestamp: int, end_timestamp: int, per_page: int = 150) -> list[dict]:
+    """
+    Get all anime episodes airing in a specific time range (AniChart-style).
+
+    Args:
+        start_timestamp: Start of time range (Unix timestamp)
+        end_timestamp: End of time range (Unix timestamp)
+        per_page: Number of results per page (max 150)
+
+    Returns:
+        List of airing schedule items with media details
+    """
+    query = """
+    query WeeklySchedule($startTime: Int!, $endTime: Int!, $perPage: Int!) {
+      Page(page: 1, perPage: $perPage) {
+        pageInfo {
+          total
+          perPage
+          currentPage
+          lastPage
+          hasNextPage
+        }
+        airingSchedules(
+          airingAt_greater: $startTime
+          airingAt_lesser: $endTime
+          sort: TIME
+        ) {
+          id
+          airingAt
+          timeUntilAiring
+          episode
+          mediaId
+          media {
+            id
+            title {
+              romaji
+              english
+            }
+            coverImage {
+              large
+              medium
+            }
+            status
+            episodes
+            averageScore
+            genres
+            format
+            studios(isMain: true) {
+              nodes {
+                name
+              }
+            }
+          }
+        }
+      }
+    }
+    """
+
+    variables = {
+        "startTime": start_timestamp,
+        "endTime": end_timestamp,
+        "perPage": per_page
+    }
+
+    # Apply rate limiting
+    await _rate_limit()
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(ANILIST_URL, json={"query": query, "variables": variables})
+        response.raise_for_status()
+        data = response.json()
+
+        if "errors" in data:
+            raise Exception(f"AniList API error: {data['errors']}")
+
+        schedules = data["data"]["Page"]["airingSchedules"]
+
+        # Transform the data
+        result = []
+        for schedule in schedules:
+            media = schedule["media"]
+            studios = [s["name"] for s in media.get("studios", {}).get("nodes", [])]
+
+            result.append({
+                "schedule_id": schedule["id"],
+                "airing_at": schedule["airingAt"],
+                "time_until_airing": schedule["timeUntilAiring"],
+                "episode": schedule["episode"],
+                "anime_id": media["id"],
+                "title": media["title"].get("english") or media["title"].get("romaji"),
+                "title_romaji": media["title"].get("romaji"),
+                "cover_image": media["coverImage"].get("large") or media["coverImage"].get("medium"),
+                "status": media["status"],
+                "total_episodes": media.get("episodes"),
+                "score": media.get("averageScore"),
+                "genres": media.get("genres", []),
+                "format": media.get("format"),
+                "studios": studios,
+                "airs_in_human": _format_countdown(schedule["timeUntilAiring"])
+            })
+
+        return result
+
+
 async def get_seasonal_anime(season: str, year: int) -> list[dict]:
     """Get all anime for a given season."""
     season_map = {"WINTER": "WINTER", "SPRING": "SPRING", "SUMMER": "SUMMER", "FALL": "FALL"}

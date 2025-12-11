@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 load_dotenv()
 
 from src.agent import AnimeScheduleAgent
-from src.tools import get_bingeable_anime, get_season_anime, search_anime
+from src.tools import get_bingeable_anime, get_season_anime, search_anime, get_weekly_schedule
 
 # Global agent instance
 agent: Optional[AnimeScheduleAgent] = None
@@ -214,10 +214,28 @@ async def get_seasonal(season: Optional[str] = None, year: Optional[int] = None)
     """Get all anime from a season with predictions."""
     if not season or not year:
         season, year = _get_current_season()
-    
+
     try:
         anime_list = get_season_anime(season, year)
         return {"season": f"{season} {year}", "anime": anime_list}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/anime/schedule/weekly")
+async def get_weekly(weeks_offset: int = 0):
+    """
+    Get all anime episodes airing in a specific week, grouped by day (AniChart-style).
+
+    Args:
+        weeks_offset: Number of weeks to offset (0 = current week, 1 = next week, -1 = last week)
+
+    Returns:
+        Weekly schedule grouped by day with airing times
+    """
+    try:
+        schedule_data = get_weekly_schedule(weeks_offset)
+        return schedule_data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -240,6 +258,7 @@ async def root():
             "POST /query": "Natural language query to agent",
             "GET /anime/bingeable": "Get bingeable anime (with images)",
             "GET /anime/seasonal": "Get seasonal anime (with images)",
+            "GET /anime/schedule/weekly": "Get weekly airing schedule (AniChart-style)",
             "GET /anime/search/{query}": "Search specific anime",
             "GET /health": "Health check"
         }

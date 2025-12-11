@@ -12,6 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import WeeklySchedule from '@/components/WeeklySchedule'
 
 interface AnimeData {
   anime_id: number
@@ -67,7 +68,7 @@ const EXAMPLE_QUERIES = [
   "Show me anime finishing this week",
 ]
 
-type Tab = 'chat' | 'browse'
+type Tab = 'chat' | 'browse' | 'schedule'
 type StatusFilter = 'all' | 'bingeable' | 'releasing' | 'finished' | 'upcoming'
 type SortOption = 'popularity' | 'completion' | 'score'
 
@@ -338,6 +339,14 @@ export default function Home() {
                   Browse
                 </Button>
                 <Button
+                  variant={tab === 'schedule' ? 'default' : 'ghost'}
+                  size="sm"
+                  onClick={() => setTab('schedule')}
+                >
+                  <Calendar className="w-4 h-4 mr-1" />
+                  Schedule
+                </Button>
+                <Button
                   variant={tab === 'chat' ? 'default' : 'ghost'}
                   size="sm"
                   onClick={() => setTab('chat')}
@@ -361,7 +370,13 @@ export default function Home() {
       </header>
 
       {/* Main Content */}
-      {tab === 'browse' ? (
+      {tab === 'schedule' ? (
+        <main className="flex-1 overflow-y-auto">
+          <div className="container mx-auto px-4 py-6">
+            <WeeklySchedule />
+          </div>
+        </main>
+      ) : tab === 'browse' ? (
         <main className="flex-1 overflow-y-auto">
           <div className="container mx-auto px-4 py-6">
             {/* Filter Bar */}
