@@ -164,7 +164,7 @@ export default function WeeklySchedule() {
                         {/* Score */}
                         {item.score && (
                           <div className="absolute bottom-2 left-2 bg-black/70 backdrop-blur-sm px-2 py-1 rounded text-xs font-semibold text-white">
-                            ⭐ {item.score}%
+                            {item.score}%
                           </div>
                         )}
                       </div>

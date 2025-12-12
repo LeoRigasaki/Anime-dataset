@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import WeeklySchedule from '@/components/WeeklySchedule'
+import MonthlySchedule from '@/components/MonthlySchedule'
 
 interface AnimeData {
   anime_id: number
@@ -139,7 +139,7 @@ export default function Home() {
         anime: data.anime || []
       }])
     } catch (error) {
-      setMessages(prev => [...prev, { role: 'assistant', content: '❌ Failed to connect to API.' }])
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Failed to connect to API.' }])
     } finally {
       setLoading(false)
     }
@@ -261,7 +261,7 @@ export default function Home() {
           {/* Score Badge */}
           {anime.score && (
             <div className="absolute bottom-2 left-2 bg-black/70 backdrop-blur-sm px-2 py-1 rounded text-xs font-semibold text-white">
-              ⭐ {anime.score}%
+              {anime.score}%
             </div>
           )}
         </div>
@@ -318,23 +318,25 @@ export default function Home() {
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       {/* Header */}
       <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="text-3xl">🎌</span>
-              <div>
-                <h1 className="text-xl font-bold">AnimeScheduleAgent</h1>
-                <p className="text-xs text-muted-foreground">AI-Powered Anime Tracker</p>
+        <div className="container mx-auto px-3 sm:px-4 py-3 sm:py-4">
+          <div className="flex items-center justify-between gap-2">
+            {/* Logo */}
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+              <Calendar className="w-6 h-6 sm:w-8 sm:h-8 text-primary shrink-0" />
+              <div className="min-w-0">
+                <h1 className="text-sm sm:text-xl font-bold truncate">AnimeScheduleAgent</h1>
+                <p className="text-xs text-muted-foreground hidden sm:block">AI-Powered Anime Tracker</p>
               </div>
             </div>
 
-            {/* Tabs */}
-            <div className="flex items-center gap-4">
-              <div className="flex bg-muted rounded-lg p-1">
+            {/* Tabs and Status */}
+            <div className="flex items-center gap-2 sm:gap-4">
+              <div className="flex bg-muted rounded-lg p-0.5 sm:p-1">
                 <Button
                   variant={tab === 'browse' ? 'default' : 'ghost'}
                   size="sm"
                   onClick={() => setTab('browse')}
+                  className="px-2 sm:px-3 text-xs sm:text-sm"
                 >
                   Browse
                 </Button>
@@ -342,25 +344,27 @@ export default function Home() {
                   variant={tab === 'schedule' ? 'default' : 'ghost'}
                   size="sm"
                   onClick={() => setTab('schedule')}
+                  className="px-2 sm:px-3 text-xs sm:text-sm"
                 >
-                  <Calendar className="w-4 h-4 mr-1" />
-                  Schedule
+                  <Calendar className="w-3 h-3 sm:w-4 sm:h-4 sm:mr-1" />
+                  <span className="hidden sm:inline">Schedule</span>
                 </Button>
                 <Button
                   variant={tab === 'chat' ? 'default' : 'ghost'}
                   size="sm"
                   onClick={() => setTab('chat')}
+                  className="px-2 sm:px-3 text-xs sm:text-sm"
                 >
                   Chat
                 </Button>
               </div>
 
-              {/* Status Indicator */}
+              {/* Status Indicator - dot only on mobile */}
               <div className="flex items-center gap-2 text-sm">
-                <span className={`w-2 h-2 rounded-full ${
+                <span className={`w-2 h-2 rounded-full shrink-0 ${
                   apiStatus === 'online' ? 'bg-green-500' : apiStatus === 'offline' ? 'bg-red-500' : 'bg-yellow-500'
                 }`} />
-                <span className="text-muted-foreground text-xs">
+                <span className="text-muted-foreground text-xs hidden sm:inline">
                   {apiStatus === 'online' ? 'Connected' : apiStatus === 'offline' ? 'Offline' : 'Connecting...'}
                 </span>
               </div>
@@ -373,76 +377,84 @@ export default function Home() {
       {tab === 'schedule' ? (
         <main className="flex-1 overflow-y-auto">
           <div className="container mx-auto px-4 py-6">
-            <WeeklySchedule />
+            <MonthlySchedule />
           </div>
         </main>
       ) : tab === 'browse' ? (
         <main className="flex-1 overflow-y-auto">
-          <div className="container mx-auto px-4 py-6">
+          <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6">
             {/* Filter Bar */}
-            <div className="mb-6 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-2xl font-bold">{seasonInfo || 'Loading...'}</h2>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {filteredAnime.length} anime {statusFilter !== 'all' && `• ${statusFilter}`}
+            <div className="mb-4 sm:mb-6 space-y-3 sm:space-y-4">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <h2 className="text-xl sm:text-2xl font-bold truncate">{seasonInfo || 'Loading...'}</h2>
+                  <p className="text-xs sm:text-sm text-muted-foreground mt-1">
+                    {filteredAnime.length} anime {statusFilter !== 'all' && `- ${statusFilter}`}
                   </p>
                 </div>
 
-                <Button onClick={loadAnimeData} variant="outline" size="sm" disabled={loading}>
+                <Button onClick={loadAnimeData} variant="outline" size="sm" disabled={loading} className="shrink-0">
                   {loading ? 'Loading...' : 'Refresh'}
                 </Button>
               </div>
 
               {/* Filters */}
-              <div className="flex flex-wrap gap-3">
-                <div className="flex items-center gap-2">
+              <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:gap-3">
+                <div className="flex items-center gap-2 mb-1 sm:mb-0">
                   <Filter className="w-4 h-4 text-muted-foreground" />
                   <span className="text-sm font-medium">Filter:</span>
                 </div>
 
-                <Button
-                  variant={statusFilter === 'all' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setStatusFilter('all')}
-                >
-                  All Anime
-                </Button>
-                <Button
-                  variant={statusFilter === 'bingeable' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setStatusFilter('bingeable')}
-                >
-                  <CheckCircle2 className="w-3 h-3 mr-1" />
-                  Bingeable
-                </Button>
-                <Button
-                  variant={statusFilter === 'releasing' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setStatusFilter('releasing')}
-                >
-                  <PlayCircle className="w-3 h-3 mr-1" />
-                  Airing Now
-                </Button>
-                <Button
-                  variant={statusFilter === 'finished' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setStatusFilter('finished')}
-                >
-                  Finished
-                </Button>
-                <Button
-                  variant={statusFilter === 'upcoming' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setStatusFilter('upcoming')}
-                >
-                  <Clock className="w-3 h-3 mr-1" />
-                  Upcoming
-                </Button>
+                {/* Filter buttons - horizontal scroll on mobile */}
+                <div className="flex gap-2 overflow-x-auto pb-2 sm:pb-0 sm:flex-wrap -mx-3 px-3 sm:mx-0 sm:px-0">
+                  <Button
+                    variant={statusFilter === 'all' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setStatusFilter('all')}
+                    className="shrink-0 text-xs sm:text-sm"
+                  >
+                    All
+                  </Button>
+                  <Button
+                    variant={statusFilter === 'bingeable' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setStatusFilter('bingeable')}
+                    className="shrink-0 text-xs sm:text-sm"
+                  >
+                    <CheckCircle2 className="w-3 h-3 mr-1" />
+                    Bingeable
+                  </Button>
+                  <Button
+                    variant={statusFilter === 'releasing' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setStatusFilter('releasing')}
+                    className="shrink-0 text-xs sm:text-sm"
+                  >
+                    <PlayCircle className="w-3 h-3 mr-1" />
+                    Airing
+                  </Button>
+                  <Button
+                    variant={statusFilter === 'finished' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setStatusFilter('finished')}
+                    className="shrink-0 text-xs sm:text-sm"
+                  >
+                    Finished
+                  </Button>
+                  <Button
+                    variant={statusFilter === 'upcoming' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setStatusFilter('upcoming')}
+                    className="shrink-0 text-xs sm:text-sm"
+                  >
+                    <Clock className="w-3 h-3 mr-1" />
+                    Upcoming
+                  </Button>
+                </div>
 
-                <div className="ml-auto">
+                <div className="w-full sm:w-auto sm:ml-auto">
                   <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortOption)}>
-                    <SelectTrigger className="w-[180px]">
+                    <SelectTrigger className="w-full sm:w-[180px]">
                       <SelectValue placeholder="Sort by" />
                     </SelectTrigger>
                     <SelectContent>
@@ -466,7 +478,7 @@ export default function Home() {
                 <p>No anime found with the selected filters</p>
               </div>
             ) : (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4 pb-8">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-2 sm:gap-4 pb-8">
                 {filteredAnime.map((anime) => (
                   <AnimeCard key={anime.anime_id} anime={anime} />
                 ))}
@@ -478,12 +490,12 @@ export default function Home() {
         /* Chat Tab */
         <>
           <main className="flex-1 overflow-y-auto">
-            <div className="container mx-auto px-4 py-6 max-w-4xl">
+            <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-4xl">
               {messages.length === 0 ? (
-                <div className="text-center py-16">
-                  <h2 className="text-2xl font-bold mb-2">Ask me about anime schedules!</h2>
-                  <p className="text-muted-foreground mb-8">I can help you find when anime will finish airing</p>
-                  <div className="flex flex-wrap justify-center gap-2">
+                <div className="text-center py-8 sm:py-16">
+                  <h2 className="text-xl sm:text-2xl font-bold mb-2">Ask me about anime schedules!</h2>
+                  <p className="text-sm sm:text-base text-muted-foreground mb-6 sm:mb-8">I can help you find when anime will finish airing</p>
+                  <div className="flex flex-col sm:flex-row sm:flex-wrap justify-center gap-2">
                     {EXAMPLE_QUERIES.map((query, i) => (
                       <Button
                         key={i}
@@ -491,6 +503,7 @@ export default function Home() {
                         size="sm"
                         onClick={() => sendQuery(query)}
                         disabled={loading || apiStatus === 'offline'}
+                        className="text-xs sm:text-sm whitespace-normal h-auto py-2"
                       >
                         {query}
                       </Button>
@@ -540,20 +553,20 @@ export default function Home() {
 
           {/* Chat Input */}
           <footer className="border-t border-border bg-card/50 backdrop-blur-sm">
-            <div className="container mx-auto px-4 py-4 max-w-4xl">
-              <form onSubmit={handleSubmit} className="flex gap-3">
+            <div className="container mx-auto px-3 sm:px-4 py-3 sm:py-4 max-w-4xl">
+              <form onSubmit={handleSubmit} className="flex gap-2 sm:gap-3">
                 <input
                   type="text"
                   value={input}
                   onChange={e => setInput(e.target.value)}
                   placeholder="Ask about anime schedules..."
                   disabled={loading || apiStatus === 'offline'}
-                  className="flex-1 bg-background border border-input rounded-lg px-4 py-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+                  className="flex-1 bg-background border border-input rounded-lg px-3 sm:px-4 py-2 sm:py-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
                 />
                 <Button
                   type="submit"
                   disabled={loading || !input.trim() || apiStatus === 'offline'}
-                  size="lg"
+                  className="px-4 sm:px-6"
                 >
                   Send
                 </Button>
