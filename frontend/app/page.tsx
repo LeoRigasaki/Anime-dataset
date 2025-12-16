@@ -346,8 +346,8 @@ export default function Home() {
                   onClick={() => setTab('schedule')}
                   className="px-2 sm:px-3 text-xs sm:text-sm"
                 >
-                  <Calendar className="w-3 h-3 sm:w-4 sm:h-4 sm:mr-1" />
-                  <span className="hidden sm:inline">Schedule</span>
+                  <Calendar className="w-3 h-3 sm:w-4 sm:h-4 mr-1" />
+                  Schedule
                 </Button>
                 <Button
                   variant={tab === 'chat' ? 'default' : 'ghost'}

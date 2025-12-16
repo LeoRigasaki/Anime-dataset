@@ -32,7 +32,9 @@ export default function MonthlySchedule() {
   const [scheduleData, setScheduleData] = useState<Map<string, ScheduleItem[]>>(new Map())
   const [loading, setLoading] = useState(false)
   const [currentDate, setCurrentDate] = useState(new Date())
-  const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  // Auto-select today on load
+  const todayKey = new Date().toISOString().split('T')[0]
+  const [selectedDate, setSelectedDate] = useState<string | null>(todayKey)
   const [selectedAnime, setSelectedAnime] = useState<ScheduleItem[]>([])
 
   // Get the first day and last day of the current month view
@@ -100,6 +102,14 @@ export default function MonthlySchedule() {
   useEffect(() => {
     loadMonthSchedule()
   }, [weeksToFetch])
+
+  // Update selected anime when schedule data loads (for auto-selected today)
+  useEffect(() => {
+    if (selectedDate && scheduleData.size > 0) {
+      const anime = scheduleData.get(selectedDate) || []
+      setSelectedAnime(anime)
+    }
+  }, [scheduleData, selectedDate])
 
   const loadMonthSchedule = async () => {
     setLoading(true)
@@ -226,9 +236,9 @@ export default function MonthlySchedule() {
         </div>
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-4 lg:gap-6">
+      <div className="flex flex-col xl:flex-row gap-4 xl:gap-6">
         {/* Calendar Grid */}
-        <div className="flex-1">
+        <div className="flex-1 min-w-0">
           {loading ? (
             <div className="flex items-center justify-center h-96">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
@@ -294,21 +304,21 @@ export default function MonthlySchedule() {
           )}
         </div>
 
-        {/* Selected Day Panel - Shows as overlay on mobile, side panel on desktop */}
+        {/* Selected Day Panel - Shows as overlay on mobile/tablet, side panel on desktop */}
         {selectedDate && (
           <>
-            {/* Mobile overlay backdrop */}
+            {/* Mobile/tablet overlay backdrop */}
             <div
-              className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+              className="fixed inset-0 bg-black/50 z-40 xl:hidden"
               onClick={() => {
                 setSelectedDate(null)
                 setSelectedAnime([])
               }}
             />
 
-            {/* Panel - fixed on mobile, static on desktop */}
-            <div className="fixed inset-x-4 bottom-4 top-auto max-h-[70vh] z-50 lg:relative lg:inset-auto lg:w-80 lg:shrink-0 lg:max-h-none lg:z-auto">
-              <Card className="lg:sticky lg:top-20 h-full">
+            {/* Panel - fixed on mobile/tablet, static on desktop */}
+            <div className="fixed inset-x-4 bottom-4 top-auto max-h-[70vh] z-50 xl:relative xl:inset-auto xl:w-80 xl:shrink-0 xl:max-h-none xl:z-auto">
+              <Card className="xl:sticky xl:top-20 h-full">
                 <CardContent className="p-4 h-full flex flex-col">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="font-bold text-lg">
@@ -383,7 +393,7 @@ export default function MonthlySchedule() {
         )}
 
         {/* Desktop only: Placeholder when no date selected */}
-        <div className="hidden lg:block w-80 shrink-0">
+        <div className="hidden xl:block w-80 shrink-0">
           {!selectedDate && (
             <Card className="sticky top-20">
               <CardContent className="p-4">
