@@ -30,3 +30,4 @@ Create `.env.local` to customize the API URL:
 ```
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
+# Test auto-deploy Thu Dec 18 23:52:30 PKT 2025
