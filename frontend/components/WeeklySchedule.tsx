@@ -125,12 +125,31 @@ export default function WeeklySchedule() {
           {DAYS_ORDER.filter(day => schedule.schedule[day]?.length > 0).map(day => (
             <div key={day} className="space-y-3">
               {/* Day Header */}
-              <div className="sticky top-0 bg-background/95 backdrop-blur-sm py-2 border-b border-border z-10">
-                <h3 className="text-xl font-bold text-primary">{day}</h3>
-                <p className="text-sm text-muted-foreground">
-                  {schedule.schedule[day].length} episodes
-                </p>
-              </div>
+              {(() => {
+                const finalesCount = schedule.schedule[day].filter(
+                  item => item.total_episodes && item.episode === item.total_episodes
+                ).length
+
+                return (
+                  <div className={`sticky top-0 backdrop-blur-md py-3 border-b z-10 flex items-center justify-between px-2 rounded-t-lg transition-colors ${finalesCount > 0
+                      ? 'bg-amber-500/10 border-amber-500/30 text-amber-500'
+                      : 'bg-background/95 border-border'
+                    }`}>
+                    <div className="flex items-baseline gap-3">
+                      <h3 className="text-xl font-bold uppercase tracking-tight">{day}</h3>
+                      <p className={`text-sm font-medium ${finalesCount > 0 ? 'text-amber-500/80' : 'text-muted-foreground'}`}>
+                        {schedule.schedule[day].length} eps
+                      </p>
+                    </div>
+
+                    {finalesCount > 0 && (
+                      <Badge variant="secondary" className="bg-amber-500/20 text-amber-600 dark:text-amber-400 hover:bg-amber-500/30 border-0">
+                        {finalesCount} Finales
+                      </Badge>
+                    )}
+                  </div>
+                )
+              })()}
 
               {/* Episodes Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">

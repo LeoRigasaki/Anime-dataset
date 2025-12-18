@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 load_dotenv()
 
 from src.agent import AnimeScheduleAgent
-from src.tools import get_bingeable_anime, get_season_anime, search_anime, get_weekly_schedule
+from src.tools import get_season_anime, search_anime, get_weekly_schedule
 
 # Global agent instance
 agent: Optional[AnimeScheduleAgent] = None
@@ -92,11 +92,12 @@ def _search_and_enrich_anime(response_text: str, existing_anime: list[dict]) -> 
                         'cover_image': result.get('cover_image'),
                         'status': result.get('status'),
                         'predicted_completion': result.get('predicted_completion'),
-                        'confidence': result.get('confidence'),
                         'score': result.get('score'),
                         'episodes': result.get('episodes'),
                         'current_episode': result.get('current_episode'),
-                        'is_bingeable': result.get('is_bingeable')
+                        'genres': result.get('genres'),
+                        'synopsis': result.get('synopsis'),
+                        'is_adult': result.get('is_adult'),
                     }
                     # Remove None values
                     anime_entry = {k: v for k, v in anime_entry.items() if v is not None}
@@ -156,11 +157,12 @@ class AnimeData(BaseModel):
     cover_image: Optional[str] = None
     status: Optional[str] = None
     predicted_completion: Optional[str] = None
-    confidence: Optional[str] = None
     score: Optional[float] = None
     episodes: Optional[int] = None
     current_episode: Optional[int] = None
-    is_bingeable: Optional[bool] = None
+    genres: Optional[list[str]] = None
+    synopsis: Optional[str] = None
+    is_adult: Optional[bool] = None
 
 class QueryResponse(BaseModel):
     response: str
@@ -197,22 +199,6 @@ async def query_agent(request: QueryRequest):
         return QueryResponse(response=response, success=True, anime=enriched_anime)
     except Exception as e:
         return QueryResponse(response=f"Error: {str(e)}", success=False)
-
-
-@app.get("/anime/bingeable")
-async def get_bingeable(season: Optional[str] = None, year: Optional[int] = None, by_date: Optional[str] = None):
-    """Get anime that are finished or finishing soon."""
-    if not season or not year:
-        season, year = _get_current_season()
-    
-    if not by_date:
-        by_date = (date.today() + timedelta(days=30)).isoformat()
-    
-    try:
-        anime_list = get_bingeable_anime(season, year, by_date)
-        return {"season": f"{season} {year}", "by_date": by_date, "anime": anime_list}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/anime/seasonal")
@@ -262,8 +248,7 @@ async def root():
         "name": "AnimeScheduleAgent API",
         "endpoints": {
             "POST /query": "Natural language query to agent",
-            "GET /anime/bingeable": "Get bingeable anime (with images)",
-            "GET /anime/seasonal": "Get seasonal anime (with images)",
+            "GET /anime/seasonal": "Get seasonal anime with predictions",
             "GET /anime/schedule/weekly": "Get weekly airing schedule (AniChart-style)",
             "GET /anime/search/{query}": "Search specific anime",
             "GET /health": "Health check"

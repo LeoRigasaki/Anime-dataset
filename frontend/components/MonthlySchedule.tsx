@@ -26,7 +26,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
-                     'July', 'August', 'September', 'October', 'November', 'December']
+  'July', 'August', 'September', 'October', 'November', 'December']
 
 export default function MonthlySchedule() {
   const [scheduleData, setScheduleData] = useState<Map<string, ScheduleItem[]>>(new Map())
@@ -265,12 +265,14 @@ export default function MonthlySchedule() {
                     const currentMonth = isCurrentMonth(date)
                     const isSelected = selectedDate === dateKey
 
+                    const finalesCount = dayAnime.filter(a => a.total_episodes && a.episode === a.total_episodes).length
+
                     return (
                       <button
                         key={index}
                         onClick={() => handleDateClick(date)}
                         className={`
-                          relative aspect-square p-1 rounded-lg transition-all text-left
+                          relative aspect-[3/4] sm:aspect-square p-1 rounded-lg transition-all text-left flex flex-col justify-between
                           ${currentMonth ? 'bg-card' : 'bg-muted/30'}
                           ${today ? 'ring-2 ring-primary' : ''}
                           ${isSelected ? 'ring-2 ring-blue-500 bg-blue-500/10' : ''}
@@ -286,12 +288,22 @@ export default function MonthlySchedule() {
                         </span>
 
                         {hasAnime && (
-                          <div className="absolute bottom-1 left-1 right-1">
+                          <div className="flex flex-col gap-0.5 w-full">
+                            {finalesCount > 0 && (
+                              <>
+                                {/* Desktop: Full Badge */}
+                                <div className="hidden sm:block text-[10px] font-bold rounded px-1 py-0.5 text-center truncate bg-amber-500 text-white shadow-sm">
+                                  {finalesCount} Ends
+                                </div>
+                                {/* Mobile: Compact Dot */}
+                                <div className="sm:hidden mx-auto w-1.5 h-1.5 rounded-full bg-amber-500 shadow-sm mb-0.5" />
+                              </>
+                            )}
                             <div className={`
-                              text-xs font-medium rounded px-1 py-0.5 text-center truncate
+                              text-[10px] font-medium rounded px-1 py-0.5 text-center truncate w-full
                               ${dayAnime.length > 5 ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}
                             `}>
-                              {dayAnime.length} ep{dayAnime.length !== 1 ? 's' : ''}
+                              {dayAnime.length} <span className="hidden sm:inline">eps</span>
                             </div>
                           </div>
                         )}
@@ -304,86 +316,111 @@ export default function MonthlySchedule() {
           )}
         </div>
 
-        {/* Selected Day Panel - Shows as overlay on mobile/tablet, side panel on desktop */}
+        {/* Selected Day Panel */}
         {selectedDate && (
           <>
             {/* Mobile/tablet overlay backdrop */}
             <div
-              className="fixed inset-0 bg-black/50 z-40 xl:hidden"
-              onClick={() => {
-                setSelectedDate(null)
-                setSelectedAnime([])
-              }}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 xl:hidden"
+              onClick={() => setSelectedDate(null)}
             />
 
-            {/* Panel - fixed on mobile/tablet, static on desktop */}
-            <div className="fixed inset-x-4 bottom-4 top-auto max-h-[70vh] z-50 xl:relative xl:inset-auto xl:w-80 xl:shrink-0 xl:max-h-none xl:z-auto">
-              <Card className="xl:sticky xl:top-20 h-full">
+            {/* Panel - Slide from LEFT on mobile, static on desktop */}
+            <div className={`
+              fixed inset-y-0 left-0 w-3/4 max-w-sm z-50 bg-background border-r shadow-2xl transition-transform duration-300 ease-in-out transform
+              xl:relative xl:inset-auto xl:w-80 xl:shrink-0 xl:translate-x-0 xl:border-none xl:shadow-none xl:bg-transparent
+              ${selectedDate ? 'translate-x-0' : '-translate-x-full'}
+            `}>
+              <Card className="h-full xl:sticky xl:top-20 overflow-hidden flex flex-col rounded-none xl:rounded-lg border-y-0 xl:border-y border-l-0 xl:border-l border-r-0 xl:border-r">
                 <CardContent className="p-4 h-full flex flex-col">
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-bold text-lg">
-                      {new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', {
-                        weekday: 'long',
-                        month: 'short',
-                        day: 'numeric'
-                      })}
-                    </h3>
+                    <div>
+                      <h3 className="font-bold text-lg">
+                        {new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', {
+                          weekday: 'long',
+                          month: 'short',
+                          day: 'numeric'
+                        })}
+                      </h3>
+                      {selectedAnime.some(a => a.total_episodes && a.episode === a.total_episodes) && (
+                        <span className="text-xs font-bold text-amber-500">
+                          {selectedAnime.filter(a => a.total_episodes && a.episode === a.total_episodes).length} Finales
+                        </span>
+                      )}
+                    </div>
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => {
-                        setSelectedDate(null)
-                        setSelectedAnime([])
-                      }}
+                      onClick={() => setSelectedDate(null)}
+                      className="xl:hidden"
                     >
                       <X className="w-4 h-4" />
                     </Button>
                   </div>
 
                   {selectedAnime.length === 0 ? (
-                    <p className="text-muted-foreground text-sm">No episodes airing this day</p>
+                    <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground space-y-2">
+                      <Clock className="w-8 h-8 opacity-20" />
+                      <p className="text-sm">No episodes airing this day</p>
+                    </div>
                   ) : (
-                    <div className="space-y-3 overflow-y-auto flex-1">
+                    <div className="space-y-3 overflow-y-auto flex-1 pr-1">
                       {selectedAnime
                         .sort((a, b) => a.airing_at - b.airing_at)
-                        .map((item) => (
-                        <a
-                          key={item.schedule_id}
-                          href={`https://anilist.co/anime/${item.anime_id}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="block"
-                        >
-                          <Card className="overflow-hidden hover:ring-2 hover:ring-primary transition-all">
-                            <div className="flex gap-3 p-2">
-                              {item.cover_image && (
-                                <img
-                                  src={item.cover_image}
-                                  alt={item.title}
-                                  className="w-12 h-16 object-cover rounded"
-                                />
-                              )}
-                              <div className="flex-1 min-w-0">
-                                <h4 className="font-medium text-sm line-clamp-2 leading-tight">
-                                  {item.title}
-                                </h4>
-                                <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-                                  <span>Ep {item.episode}</span>
-                                  {item.total_episodes && (
-                                    <span>/ {item.total_episodes}</span>
+                        .map((item) => {
+                          const isFinale = item.total_episodes && item.episode === item.total_episodes
+
+                          return (
+                            <a
+                              key={item.schedule_id}
+                              href={`https://anilist.co/anime/${item.anime_id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block group"
+                            >
+                              <Card className={`overflow-hidden transition-all ${isFinale
+                                ? 'border-amber-500 bg-amber-500/5 ring-1 ring-amber-500'
+                                : 'hover:ring-2 hover:ring-primary border-transparent bg-muted/30 hover:bg-muted/50'
+                                }`}>
+                                <div className="flex gap-3 p-2">
+                                  {item.cover_image && (
+                                    <div className="relative shrink-0">
+                                      <img
+                                        src={item.cover_image}
+                                        alt={item.title}
+                                        className="w-12 h-16 object-cover rounded shadow-sm"
+                                      />
+                                      {isFinale && (
+                                        <div className="absolute -bottom-1 -right-1 bg-amber-500 text-white text-[8px] font-bold px-1.5 py-0.5 rounded shadow-sm whitespace-nowrap scale-90 origin-bottom-right">
+                                          FINALE
+                                        </div>
+                                      )}
+                                    </div>
                                   )}
+                                  <div className="flex-1 min-w-0 py-0.5">
+                                    <div className="flex justify-between items-start gap-2">
+                                      <h4 className={`font-medium text-sm line-clamp-2 leading-tight ${isFinale ? 'text-amber-500' : 'text-foreground group-hover:text-primary transition-colors'}`}>
+                                        {item.title}
+                                      </h4>
+                                    </div>
+                                    <div className="flex items-center gap-2 mt-1.5 text-xs text-muted-foreground">
+                                      <span className={isFinale ? 'font-bold text-foreground' : ''}>Ep {item.episode}</span>
+                                      {item.total_episodes && (
+                                        <span>/ {item.total_episodes}</span>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-2 mt-1">
+                                      <Clock className="w-3 h-3 text-muted-foreground" />
+                                      <span className="text-xs font-medium text-primary">
+                                        {item.airing_time}
+                                      </span>
+                                    </div>
+                                  </div>
                                 </div>
-                                <div className="flex items-center gap-2 mt-1">
-                                  <Clock className="w-3 h-3 text-muted-foreground" />
-                                  <span className="text-xs font-medium text-primary">
-                                    {item.airing_time}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                          </Card>
-                        </a>
-                      ))}
+                              </Card>
+                            </a>
+                          )
+                        })}
                     </div>
                   )}
                 </CardContent>
@@ -391,20 +428,6 @@ export default function MonthlySchedule() {
             </div>
           </>
         )}
-
-        {/* Desktop only: Placeholder when no date selected */}
-        <div className="hidden xl:block w-80 shrink-0">
-          {!selectedDate && (
-            <Card className="sticky top-20">
-              <CardContent className="p-4">
-                <div className="text-center py-8 text-muted-foreground">
-                  <Calendar className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                  <p className="text-sm">Select a day to see episodes</p>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </div>
       </div>
     </div>
   )

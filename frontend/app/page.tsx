@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useMemo } from 'react'
-import { Calendar, Clock, Filter, PlayCircle, CheckCircle2, TrendingUp, X } from 'lucide-react'
+import { Calendar, Clock, Filter, PlayCircle, CheckCircle2, X } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -20,13 +20,12 @@ interface AnimeData {
   cover_image?: string
   status?: string
   predicted_completion?: string
-  confidence?: string
   score?: number
   episodes?: number
   current_episode?: number
-  is_bingeable?: boolean
-  confidence_reason?: string
+  genres?: string[]
   days_until_complete?: number
+  is_adult?: boolean
   next_episode?: {
     number: number
     airs_at?: string
@@ -47,12 +46,11 @@ interface Anime {
   episodes?: number
   current_episode?: number
   predicted_completion?: string
-  confidence?: string
   cover_image?: string
   score?: number
-  is_bingeable?: boolean
-  confidence_reason?: string
+  genres?: string[]
   days_until_complete?: number
+  is_adult?: boolean
   next_episode?: {
     number: number
     airs_at?: string
@@ -62,14 +60,89 @@ interface Anime {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
+// Simple markdown parser for chat responses
+const parseMarkdown = (text: string): React.ReactNode[] => {
+  const lines = text.split('\n')
+  const elements: React.ReactNode[] = []
+
+  lines.forEach((line, lineIndex) => {
+    // Parse inline formatting
+    const parseInline = (str: string): React.ReactNode[] => {
+      const parts: React.ReactNode[] = []
+      let remaining = str
+      let keyIndex = 0
+
+      while (remaining.length > 0) {
+        // Bold: **text**
+        const boldMatch = remaining.match(/\*\*(.+?)\*\*/)
+        if (boldMatch && boldMatch.index !== undefined) {
+          if (boldMatch.index > 0) {
+            parts.push(remaining.slice(0, boldMatch.index))
+          }
+          parts.push(<strong key={`b-${keyIndex++}`}>{boldMatch[1]}</strong>)
+          remaining = remaining.slice(boldMatch.index + boldMatch[0].length)
+          continue
+        }
+
+        // Italic: *text*
+        const italicMatch = remaining.match(/\*(.+?)\*/)
+        if (italicMatch && italicMatch.index !== undefined) {
+          if (italicMatch.index > 0) {
+            parts.push(remaining.slice(0, italicMatch.index))
+          }
+          parts.push(<em key={`i-${keyIndex++}`}>{italicMatch[1]}</em>)
+          remaining = remaining.slice(italicMatch.index + italicMatch[0].length)
+          continue
+        }
+
+        parts.push(remaining)
+        break
+      }
+
+      return parts
+    }
+
+    // Handle different line types
+    if (line.startsWith('* ') || line.startsWith('- ')) {
+      // Bullet point
+      elements.push(
+        <div key={lineIndex} className="flex items-start gap-2 ml-2">
+          <span className="text-muted-foreground">•</span>
+          <span>{parseInline(line.slice(2))}</span>
+        </div>
+      )
+    } else if (line.match(/^\d+\. /)) {
+      // Numbered list
+      const match = line.match(/^(\d+)\. (.*)/)
+      if (match) {
+        elements.push(
+          <div key={lineIndex} className="flex items-start gap-2 ml-2">
+            <span className="text-muted-foreground min-w-[1.5em]">{match[1]}.</span>
+            <span>{parseInline(match[2])}</span>
+          </div>
+        )
+      }
+    } else if (line.trim() === '') {
+      // Empty line
+      elements.push(<div key={lineIndex} className="h-2" />)
+    } else {
+      // Regular text
+      elements.push(<div key={lineIndex}>{parseInline(line)}</div>)
+    }
+  })
+
+  return elements
+}
+
 const EXAMPLE_QUERIES = [
-  "When will Solo Leveling Season 2 finish?",
-  "What Fall 2025 anime can I binge by Christmas?",
-  "Show me anime finishing this week",
+  "Which anime are ending this week?",
+  "Recommend anime similar to Solo Leveling",
+  "What action anime are airing this season?",
+  "What episodes air tomorrow?",
 ]
 
 type Tab = 'chat' | 'browse' | 'schedule'
-type StatusFilter = 'all' | 'bingeable' | 'releasing' | 'finished' | 'upcoming'
+type StatusFilter = 'all' | 'releasing' | 'finished' | 'upcoming'
 type SortOption = 'popularity' | 'completion' | 'score'
 
 export default function Home() {
@@ -179,9 +252,6 @@ export default function Home() {
 
     // Apply status filter
     switch (statusFilter) {
-      case 'bingeable':
-        filtered = filtered.filter(a => a.is_bingeable || a.status === 'FINISHED')
-        break
       case 'releasing':
         filtered = filtered.filter(a => a.status === 'RELEASING')
         break
@@ -210,7 +280,7 @@ export default function Home() {
     return sorted
   }, [animeList, statusFilter, sortBy])
 
-  // Anime Card Component
+  /* Anime Card Component */
   const AnimeCard = ({ anime }: { anime: Anime }) => (
     <a
       href={`https://anilist.co/anime/${anime.anime_id}`}
@@ -218,101 +288,97 @@ export default function Home() {
       rel="noopener noreferrer"
       className="block h-full"
     >
-      <Card className="h-full overflow-hidden hover:ring-2 hover:ring-primary transition-all group">
+      <Card className="h-full border-0 shadow-lg bg-card/40 hover:bg-card/60 transition-all duration-300 group overflow-hidden relative">
         {/* Cover Image */}
-        <div className="aspect-[2/3] relative bg-muted overflow-hidden">
+        <div className="aspect-[2/3] relative overflow-hidden rounded-t-lg">
           {anime.cover_image ? (
             <img
               src={anime.cover_image}
               alt={anime.title}
-              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
               onError={(e) => {
                 e.currentTarget.style.display = 'none'
                 const parent = e.currentTarget.parentElement
                 if (parent) {
-                  parent.innerHTML = '<div class="w-full h-full flex items-center justify-center text-muted-foreground text-xs">No Image</div>'
+                  parent.innerHTML = '<div class="w-full h-full flex items-center justify-center text-muted-foreground bg-muted text-xs">No Image</div>'
                 }
               }}
             />
           ) : (
-            <div className="w-full h-full flex items-center justify-center text-muted-foreground text-xs">
+            <div className="w-full h-full flex items-center justify-center text-muted-foreground bg-muted text-xs">
               No Image
             </div>
           )}
 
-          {/* Top Badges */}
-          <div className="absolute top-2 right-2 flex flex-col gap-1">
+          {/* Glassmorphism Overlay Gradient */}
+          <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/90 via-black/40 to-transparent pointer-events-none" />
+
+          {/* Top Badges - Glassmorphic */}
+          <div className="absolute top-2 right-2 flex flex-col gap-1 items-end">
             {anime.status && (
-              <Badge variant={getStatusBadgeVariant(anime.status)} className="flex items-center gap-1">
-                {getStatusIcon(anime.status)}
-                <span className="text-xs">
-                  {anime.status === 'FINISHED' ? 'Done' : anime.status === 'RELEASING' ? 'Airing' : 'Soon'}
-                </span>
-              </Badge>
+              <div className={`px-2 py-1 rounded-md backdrop-blur-md text-[10px] font-medium border border-white/10 shadow-sm ${anime.status === 'FINISHED' ? 'bg-green-500/80 text-white' :
+                anime.status === 'RELEASING' ? 'bg-blue-500/80 text-white' :
+                  'bg-zinc-800/80 text-zinc-200'
+                }`}>
+                {anime.status === 'FINISHED' ? 'Completed' : anime.status === 'RELEASING' ? 'Airing' : 'Soon'}
+              </div>
             )}
-            {anime.is_bingeable && (
-              <Badge variant="success" className="flex items-center gap-1">
-                <TrendingUp className="w-3 h-3" />
-                <span className="text-xs">Bingeable</span>
-              </Badge>
+            {anime.is_adult && (
+              <div className="px-2 py-1 rounded-md backdrop-blur-md bg-red-500/80 text-white text-[10px] font-medium border border-white/10 shadow-sm">
+                18+
+              </div>
             )}
           </div>
 
           {/* Score Badge */}
           {anime.score && (
-            <div className="absolute bottom-2 left-2 bg-black/70 backdrop-blur-sm px-2 py-1 rounded text-xs font-semibold text-white">
+            <div className="absolute top-2 left-2 px-2 py-1 rounded-md backdrop-blur-md bg-black/60 text-white text-xs font-bold border border-white/10">
               {anime.score}%
             </div>
           )}
-        </div>
 
-        {/* Info */}
-        <CardContent className="p-3 space-y-2">
-          <h3 className="font-semibold text-sm line-clamp-2 leading-tight">{anime.title}</h3>
+          {/* Content Overlay - Positioned over image bottom */}
+          <div className="absolute bottom-0 left-0 right-0 p-3 text-white">
+            <h3 className="font-semibold text-sm line-clamp-2 leading-tight mb-2 text-shadow-sm">{anime.title}</h3>
 
-          {/* Episode Progress */}
-          {anime.episodes && (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <PlayCircle className="w-3 h-3" />
-              <span>{anime.current_episode || anime.episodes}/{anime.episodes} eps</span>
-            </div>
-          )}
-
-          {/* Next Episode */}
-          {anime.next_episode && anime.status === 'RELEASING' && (
-            <div className="flex items-center gap-2 text-xs text-blue-400">
-              <Clock className="w-3 h-3" />
-              <span>Ep {anime.next_episode.number} in {anime.next_episode.airs_in_human}</span>
-            </div>
-          )}
-
-          {/* Completion Prediction */}
-          {anime.predicted_completion && anime.status !== 'FINISHED' && (
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 text-xs text-green-400">
-                <Calendar className="w-3 h-3" />
-                <span>Done: {formatDate(anime.predicted_completion)}</span>
+            {/* Genres */}
+            {anime.genres && anime.genres.length > 0 && (
+              <div className="flex flex-wrap gap-1 mb-2">
+                {anime.genres.slice(0, 3).map((genre, i) => (
+                  <span key={i} className="px-1.5 py-0.5 text-[9px] bg-white/20 rounded backdrop-blur-sm">
+                    {genre}
+                  </span>
+                ))}
+                {anime.genres.length > 3 && (
+                  <span className="px-1.5 py-0.5 text-[9px] bg-white/10 rounded">+{anime.genres.length - 3}</span>
+                )}
               </div>
-              {anime.confidence && (
-                <Badge variant="outline" className="text-xs">
-                  {anime.confidence} confidence
-                </Badge>
+            )}
+
+            {/* Episode Info */}
+            <div className="space-y-1.5">
+              {anime.episodes && (
+                <div className="flex items-center gap-2 text-xs text-zinc-300">
+                  <PlayCircle className="w-3 h-3" />
+                  <span>{anime.current_episode || anime.episodes}/{anime.episodes} eps</span>
+                </div>
+              )}
+
+              {/* Completion Prediction */}
+              {anime.predicted_completion && anime.status !== 'FINISHED' && (
+                <div className="flex items-center gap-2 text-xs text-green-300 font-medium">
+                  <Calendar className="w-3 h-3" />
+                  <span>Ends: {formatDate(anime.predicted_completion)}</span>
+                </div>
               )}
             </div>
-          )}
+          </div>
+        </div>
 
-          {/* Finished Badge */}
-          {anime.status === 'FINISHED' && (
-            <div className="flex items-center gap-2 text-xs text-green-400">
-              <CheckCircle2 className="w-3 h-3" />
-              <span>Ready to binge!</span>
-            </div>
-          )}
-        </CardContent>
+        {/* Minimal Footer if needed, but info is now on image */}
       </Card>
     </a>
   )
-
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
@@ -361,9 +427,8 @@ export default function Home() {
 
               {/* Status Indicator - dot only on mobile */}
               <div className="flex items-center gap-2 text-sm">
-                <span className={`w-2 h-2 rounded-full shrink-0 ${
-                  apiStatus === 'online' ? 'bg-green-500' : apiStatus === 'offline' ? 'bg-red-500' : 'bg-yellow-500'
-                }`} />
+                <span className={`w-2 h-2 rounded-full shrink-0 ${apiStatus === 'online' ? 'bg-green-500' : apiStatus === 'offline' ? 'bg-red-500' : 'bg-yellow-500'
+                  }`} />
                 <span className="text-muted-foreground text-xs hidden sm:inline">
                   {apiStatus === 'online' ? 'Connected' : apiStatus === 'offline' ? 'Offline' : 'Connecting...'}
                 </span>
@@ -416,15 +481,6 @@ export default function Home() {
                     All
                   </Button>
                   <Button
-                    variant={statusFilter === 'bingeable' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setStatusFilter('bingeable')}
-                    className="shrink-0 text-xs sm:text-sm"
-                  >
-                    <CheckCircle2 className="w-3 h-3 mr-1" />
-                    Bingeable
-                  </Button>
-                  <Button
                     variant={statusFilter === 'releasing' ? 'default' : 'outline'}
                     size="sm"
                     onClick={() => setStatusFilter('releasing')}
@@ -439,6 +495,7 @@ export default function Home() {
                     onClick={() => setStatusFilter('finished')}
                     className="shrink-0 text-xs sm:text-sm"
                   >
+                    <CheckCircle2 className="w-3 h-3 mr-1" />
                     Finished
                   </Button>
                   <Button
@@ -493,8 +550,8 @@ export default function Home() {
             <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-4xl">
               {messages.length === 0 ? (
                 <div className="text-center py-8 sm:py-16">
-                  <h2 className="text-xl sm:text-2xl font-bold mb-2">Ask me about anime schedules!</h2>
-                  <p className="text-sm sm:text-base text-muted-foreground mb-6 sm:mb-8">I can help you find when anime will finish airing</p>
+                  <h2 className="text-xl sm:text-2xl font-bold mb-2">Ask me about anime!</h2>
+                  <p className="text-sm sm:text-base text-muted-foreground mb-6 sm:mb-8">I can help with schedules, recommendations, and anime info</p>
                   <div className="flex flex-col sm:flex-row sm:flex-wrap justify-center gap-2">
                     {EXAMPLE_QUERIES.map((query, i) => (
                       <Button
@@ -514,22 +571,26 @@ export default function Home() {
                 <div className="space-y-4">
                   {messages.map((msg, i) => (
                     <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                      <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${
-                        msg.role === 'user'
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-muted text-foreground'
-                      }`}>
-                        <div className="response-text whitespace-pre-wrap text-sm">{msg.content}</div>
+                      <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${msg.role === 'user'
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted text-foreground'
+                        }`}>
+                        <div className="response-text text-sm space-y-1">
+                          {msg.role === 'user' ? msg.content : parseMarkdown(msg.content)}
+                        </div>
                       </div>
 
-                      {/* Anime cards in chat */}
+                      {/* Anime cards in chat - limit to 10, only show those with cover images */}
                       {msg.anime && msg.anime.length > 0 && (
                         <div className="flex gap-3 mt-3 overflow-x-auto max-w-full pb-2">
-                          {msg.anime.map((anime) => (
-                            <div key={anime.anime_id} className="flex-shrink-0 w-40">
-                              <AnimeCard anime={anime as Anime} />
-                            </div>
-                          ))}
+                          {msg.anime
+                            .filter((anime) => anime.cover_image)
+                            .slice(0, 10)
+                            .map((anime) => (
+                              <div key={anime.anime_id} className="flex-shrink-0 w-40">
+                                <AnimeCard anime={anime as Anime} />
+                              </div>
+                            ))}
                         </div>
                       )}
                     </div>

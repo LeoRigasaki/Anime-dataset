@@ -2,7 +2,7 @@
 import asyncio
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 from collections import defaultdict
 import pandas as pd
 
@@ -10,6 +10,21 @@ from src.anilist_client import search_anime_live, get_anime_by_id, get_seasonal_
 
 # Path to data directory (relative to project root)
 DATA_DIR = Path(__file__).parent.parent / "data" / "raw"
+
+
+def _get_current_season() -> tuple[str, int]:
+    """Get current anime season and year."""
+    today = date.today()
+    month = today.month
+    year = today.year
+    if month in (1, 2, 3):
+        return "WINTER", year
+    elif month in (4, 5, 6):
+        return "SPRING", year
+    elif month in (7, 8, 9):
+        return "SUMMER", year
+    else:
+        return "FALL", year
 
 
 def _run_async(coro):
@@ -127,6 +142,64 @@ def _load_latest_csv(pattern: str) -> Optional[pd.DataFrame]:
     if not files:
         return None
     return pd.read_csv(files[0])
+
+
+def _load_anime_database() -> Optional[pd.DataFrame]:
+    """Load the comprehensive anime database with all fields."""
+    df = _load_latest_csv("anilist_seasonal_*.csv")
+    if df is None:
+        return None
+
+    # Preprocess for easier searching
+    df['title_lower'] = df['title'].str.lower().fillna('')
+    df['english_title_lower'] = df['english_title'].str.lower().fillna('')
+    df['genres'] = df['genres'].fillna('')
+    df['tags'] = df['tags'].fillna('')
+    df['synopsis'] = df['synopsis'].fillna('')
+    df['score'] = pd.to_numeric(df['score'], errors='coerce').fillna(0)
+    df['members'] = pd.to_numeric(df['members'], errors='coerce').fillna(0)
+    df['episodes'] = pd.to_numeric(df['episodes'], errors='coerce')
+
+    return df
+
+
+def _parse_genres(genres_str: str) -> list[str]:
+    """Parse genre string (semicolon or comma separated) to list."""
+    if not genres_str or pd.isna(genres_str):
+        return []
+    # Handle both semicolon and comma separators
+    if ';' in str(genres_str):
+        return [g.strip() for g in str(genres_str).split(';') if g.strip()]
+    return [g.strip() for g in str(genres_str).split(',') if g.strip()]
+
+
+def _format_anime_result(row: pd.Series) -> dict:
+    """Format a DataFrame row as anime result dict."""
+    return {
+        "anime_id": int(row.get("anime_id", 0)),
+        "title": row.get("title", ""),
+        "english_title": row.get("english_title") if pd.notna(row.get("english_title")) else None,
+        "japanese_title": row.get("japanese_title") if pd.notna(row.get("japanese_title")) else None,
+        "synopsis": row.get("synopsis") if pd.notna(row.get("synopsis")) else None,
+        "status": row.get("status", "UNKNOWN"),
+        "type": row.get("type") if pd.notna(row.get("type")) else None,
+        "episodes": int(row["episodes"]) if pd.notna(row.get("episodes")) else None,
+        "duration": row.get("duration") if pd.notna(row.get("duration")) else None,
+        "score": float(row["score"]) if pd.notna(row.get("score")) and row.get("score") > 0 else None,
+        "members": int(row["members"]) if pd.notna(row.get("members")) else None,
+        "popularity": int(row["popularity"]) if pd.notna(row.get("popularity")) else None,
+        "genres": _parse_genres(row.get("genres", "")),
+        "tags": _parse_genres(row.get("tags", ""))[:10],  # Limit tags
+        "studios": row.get("main_studios") if pd.notna(row.get("main_studios")) else None,
+        "source": row.get("source") if pd.notna(row.get("source")) else None,
+        "season": row.get("season") if pd.notna(row.get("season")) else None,
+        "season_year": int(row["season_year"]) if pd.notna(row.get("season_year")) else None,
+        "start_date": row.get("start_date") if pd.notna(row.get("start_date")) else None,
+        "end_date": row.get("end_date") if pd.notna(row.get("end_date")) else None,
+        "cover_image": row.get("cover_image_large") if pd.notna(row.get("cover_image_large")) else None,
+        "is_adult": bool(row.get("is_adult")) if pd.notna(row.get("is_adult")) else False,
+        "site_url": row.get("site_url") if pd.notna(row.get("site_url")) else None,
+    }
 
 
 def _calculate_episode_interval_from_schedule(airing_schedule: list[dict]) -> Optional[int]:
@@ -328,7 +401,7 @@ def predict_completion(
         airing_schedule: Full episode airing schedule
 
     Returns:
-        Prediction with completion date and confidence
+        Prediction with completion date
     """
     # Priority 1: Use AniList's known schedule if available
     if predicted_end_from_schedule and status == "RELEASING":
@@ -341,10 +414,7 @@ def predict_completion(
             "current_episode": current_episode,
             "total_episodes": total_episodes,
             "predicted_completion": pred_date.isoformat(),
-            "confidence": "high",
-            "confidence_reason": "Based on AniList's official airing schedule",
             "days_until_complete": max(0, days_until),
-            "is_bingeable": days_until <= 0
         }
 
     # Priority 2: Calculate from available data using full schedule
@@ -365,10 +435,7 @@ def predict_completion(
         "current_episode": current_episode,
         "total_episodes": total_episodes,
         "predicted_completion": predicted_date.isoformat() if predicted_date else None,
-        "confidence": confidence,
-        "confidence_reason": reason,
         "days_until_complete": days_until,
-        "is_bingeable": status == "FINISHED" or (days_until is not None and days_until <= 0)
     }
 
 
@@ -405,32 +472,444 @@ def get_season_anime(season: str, year: int) -> list[dict]:
     return results
 
 
-def get_bingeable_anime(season: str, year: int, by_date: Optional[str] = None) -> list[dict]:
-    """
-    Get anime that are finished or will be finished by a specific date.
-    Perfect for finding what you can binge-watch.
-    """
-    all_anime = get_season_anime(season, year)
-    
-    cutoff = date.fromisoformat(by_date) if by_date else date.today()
-    
-    bingeable = []
-    for anime in all_anime:
-        # Already finished
-        if anime["status"] == "FINISHED":
-            bingeable.append(anime)
-            continue
-        
-        # Check if will be done by cutoff
-        if anime.get("predicted_completion"):
-            pred_date = date.fromisoformat(anime["predicted_completion"])
-            if pred_date <= cutoff:
-                bingeable.append(anime)
-    
-    # Sort by completion date
-    bingeable.sort(key=lambda x: x.get("predicted_completion") or "9999-12-31")
+# === NEW COMPREHENSIVE TOOLS ===
 
-    return bingeable
+def get_anime_details(query: str) -> dict:
+    """
+    Get comprehensive details about an anime including synopsis, genres, score, and more.
+    Use this when user asks about what an anime is about, its description, genres, or ratings.
+    """
+    df = _load_anime_database()
+    if df is None:
+        # Fallback to live search
+        result = _run_async(search_anime_live(query))
+        if result:
+            result["source"] = "live"
+            return result
+        return {"error": "No data available"}
+
+    query_lower = query.lower().strip()
+
+    # Exact match first
+    exact = df[df['title_lower'] == query_lower]
+    if exact.empty:
+        exact = df[df['english_title_lower'] == query_lower]
+
+    if not exact.empty:
+        return _format_anime_result(exact.iloc[0])
+
+    # Contains match
+    contains = df[
+        df['title_lower'].str.contains(query_lower, na=False) |
+        df['english_title_lower'].str.contains(query_lower, na=False)
+    ]
+
+    if not contains.empty:
+        # Return best match (highest score/members)
+        best = contains.sort_values(['score', 'members'], ascending=False).iloc[0]
+        return _format_anime_result(best)
+
+    # Fallback to live search
+    result = _run_async(search_anime_live(query))
+    if result:
+        result["source"] = "live"
+        return result
+
+    return {"error": f"No anime found matching '{query}'"}
+
+
+def get_anime_by_genre(
+    genres: list[str],
+    min_score: Optional[float] = None,
+    limit: int = 20,
+    include_adult: bool = True
+) -> list[dict]:
+    """
+    Get anime that match specified genres.
+    Use this when user asks for anime recommendations by genre.
+    """
+    df = _load_anime_database()
+    if df is None:
+        return [{"error": "No cached data available"}]
+
+    # Normalize genres to lowercase
+    target_genres = [g.lower().strip() for g in genres]
+
+    results = []
+    for _, row in df.iterrows():
+        # Filter adult content if requested
+        if not include_adult and row.get('is_adult'):
+            continue
+
+        anime_genres = [g.lower() for g in _parse_genres(row.get('genres', ''))]
+
+        # Check if any target genre matches
+        matching_genres = [g for g in target_genres if any(g in ag for ag in anime_genres)]
+
+        if matching_genres:
+            score = float(row['score']) if pd.notna(row.get('score')) else 0
+            if min_score and score < min_score:
+                continue
+
+            result = _format_anime_result(row)
+            result['matching_genres'] = matching_genres
+            result['match_count'] = len(matching_genres)
+            results.append(result)
+
+    # Sort by match count and score
+    results.sort(key=lambda x: (-x['match_count'], -(x.get('score') or 0)))
+
+    return results[:limit]
+
+
+def get_top_anime(
+    min_score: float = 70,
+    limit: int = 20,
+    status: Optional[str] = None,
+    include_adult: bool = True
+) -> list[dict]:
+    """
+    Get top-rated anime above a minimum score.
+    Use this when user asks for best anime, highest rated, or top recommendations.
+    """
+    df = _load_anime_database()
+    if df is None:
+        return [{"error": "No cached data available"}]
+
+    # Filter by score
+    filtered = df[df['score'] >= min_score]
+
+    # Filter by status if specified
+    if status:
+        filtered = filtered[filtered['status'] == status.upper()]
+
+    # Filter adult content if requested
+    if not include_adult:
+        filtered = filtered[filtered['is_adult'] != True]
+
+    # Sort by score descending
+    sorted_df = filtered.sort_values('score', ascending=False)
+
+    results = []
+    for _, row in sorted_df.head(limit).iterrows():
+        results.append(_format_anime_result(row))
+
+    return results
+
+
+def get_similar_anime(
+    anime_title: str,
+    limit: int = 10,
+    min_score: float = 60,
+    include_adult: bool = True
+) -> list[dict]:
+    """
+    Get anime similar to a given title based on shared genres and tags.
+    Use this when user asks for recommendations similar to an anime.
+    """
+    df = _load_anime_database()
+    if df is None:
+        return [{"error": "No cached data available"}]
+
+    query_lower = anime_title.lower().strip()
+
+    # Find target anime
+    target = df[
+        (df['title_lower'] == query_lower) |
+        (df['english_title_lower'] == query_lower) |
+        df['title_lower'].str.contains(query_lower, na=False)
+    ]
+
+    if target.empty:
+        return [{"error": f"Could not find anime: {anime_title}"}]
+
+    target_row = target.iloc[0]
+    target_id = target_row['anime_id']
+    target_genres = set(g.lower() for g in _parse_genres(target_row.get('genres', '')))
+    target_tags = set(t.lower() for t in _parse_genres(target_row.get('tags', '')))
+    target_title_words = set(str(target_row['title']).lower().split())
+
+    recommendations = []
+    for _, row in df.iterrows():
+        # Skip same anime
+        if row['anime_id'] == target_id:
+            continue
+
+        # Filter adult content if requested
+        if not include_adult and row.get('is_adult'):
+            continue
+
+        # Score filter
+        score = float(row['score']) if pd.notna(row.get('score')) else 0
+        if score < min_score:
+            continue
+
+        anime_genres = set(g.lower() for g in _parse_genres(row.get('genres', '')))
+        anime_tags = set(t.lower() for t in _parse_genres(row.get('tags', '')))
+
+        # Skip sequels (share 2+ title words)
+        anime_title_words = set(str(row['title']).lower().split())
+        if len(target_title_words.intersection(anime_title_words)) >= 2:
+            continue
+
+        # Calculate similarity
+        shared_genres = target_genres.intersection(anime_genres)
+        shared_tags = target_tags.intersection(anime_tags)
+
+        if not shared_genres:
+            continue
+
+        # Similarity score
+        genre_similarity = len(shared_genres) / len(target_genres) if target_genres else 0
+        tag_similarity = len(shared_tags) / len(target_tags) if target_tags else 0
+        overall_similarity = (genre_similarity * 0.6) + (tag_similarity * 0.4)
+
+        if overall_similarity > 0.3:  # At least 30% similar
+            result = _format_anime_result(row)
+            result['similarity_score'] = round(overall_similarity * 100, 1)
+            result['shared_genres'] = list(shared_genres)
+            result['shared_tags'] = list(shared_tags)[:5]
+            recommendations.append(result)
+
+    # Sort by similarity
+    recommendations.sort(key=lambda x: -x['similarity_score'])
+
+    return recommendations[:limit]
+
+
+def get_anime_ending_on_date(target_date: str) -> list[dict]:
+    """
+    Get anime that have their FINAL episode (ending) on a specific date.
+    Use for queries like "which anime ending today/tomorrow" or specific dates.
+
+    Args:
+        target_date: Date string - "today", "tomorrow", or YYYY-MM-DD format
+    """
+    # Parse target date
+    if target_date.lower() == "today":
+        check_date = date.today()
+    elif target_date.lower() == "tomorrow":
+        check_date = date.today() + timedelta(days=1)
+    elif target_date.lower() == "yesterday":
+        check_date = date.today() - timedelta(days=1)
+    else:
+        try:
+            check_date = date.fromisoformat(target_date)
+        except ValueError:
+            return [{"error": f"Invalid date format: {target_date}. Use 'today', 'tomorrow', or YYYY-MM-DD"}]
+
+    check_date_str = check_date.isoformat()
+
+    # Get current season anime with predictions
+    season, year = _get_current_season()
+    all_anime = get_season_anime(season, year)
+
+    ending_anime = []
+    for anime in all_anime:
+        predicted = anime.get("predicted_completion")
+        end_date = anime.get("end_date")
+
+        # Check if anime ends on the target date
+        if predicted == check_date_str or end_date == check_date_str:
+            # Verify it's actually ending (not just any episode)
+            total_eps = anime.get("total_episodes") or anime.get("episodes")
+            current_ep = anime.get("current_episode")
+
+            if total_eps and current_ep:
+                remaining = total_eps - current_ep
+                if remaining <= 1:  # Last or second to last episode
+                    anime['is_finale'] = True
+                    ending_anime.append(anime)
+            elif anime.get("status") == "FINISHED":
+                anime['is_finale'] = True
+                ending_anime.append(anime)
+
+    return ending_anime
+
+
+def get_anime_ending_in_range(start_date: str, end_date: str) -> list[dict]:
+    """
+    Get anime that will finish airing within a date range.
+    Use for queries like "which anime finishing this week" or "ending this month".
+
+    Args:
+        start_date: Start date - "today" or YYYY-MM-DD
+        end_date: End date - "today", "+7days", "+30days", or YYYY-MM-DD
+    """
+    # Parse start date
+    if start_date.lower() == "today":
+        start = date.today()
+    else:
+        try:
+            start = date.fromisoformat(start_date)
+        except ValueError:
+            return [{"error": f"Invalid start date: {start_date}"}]
+
+    # Parse end date
+    if end_date.lower() == "today":
+        end = date.today()
+    elif end_date.startswith("+"):
+        try:
+            days = int(end_date[1:].replace("days", "").replace("day", "").strip())
+            end = date.today() + timedelta(days=days)
+        except ValueError:
+            return [{"error": f"Invalid end date format: {end_date}"}]
+    else:
+        try:
+            end = date.fromisoformat(end_date)
+        except ValueError:
+            return [{"error": f"Invalid end date: {end_date}"}]
+
+    # Get current season anime
+    season, year = _get_current_season()
+    all_anime = get_season_anime(season, year)
+
+    ending_anime = []
+    for anime in all_anime:
+        predicted = anime.get("predicted_completion")
+        anime_end = anime.get("end_date")
+
+        check_date = predicted or anime_end
+        if not check_date:
+            continue
+
+        try:
+            anime_date = date.fromisoformat(check_date)
+            if start <= anime_date <= end:
+                ending_anime.append(anime)
+        except ValueError:
+            continue
+
+    # Sort by completion date
+    ending_anime.sort(key=lambda x: x.get("predicted_completion") or x.get("end_date") or "9999-12-31")
+
+    return ending_anime
+
+
+def get_episodes_airing_on_date(target_date: str) -> list[dict]:
+    """
+    Get all episodes airing on a specific date (not just finales).
+    Use for "what episodes air today/tomorrow" or schedule queries.
+
+    Args:
+        target_date: "today", "tomorrow", or YYYY-MM-DD
+    """
+    # Calculate days offset
+    if target_date.lower() == "today":
+        days_offset = 0
+    elif target_date.lower() == "tomorrow":
+        days_offset = 1
+    elif target_date.lower() == "yesterday":
+        days_offset = -1
+    else:
+        try:
+            target = date.fromisoformat(target_date)
+            days_offset = (target - date.today()).days
+        except ValueError:
+            return [{"error": f"Invalid date: {target_date}"}]
+
+    start_time, end_time = get_day_range(days_offset)
+    schedules = _run_async(get_weekly_airing_schedule(start_time, end_time))
+
+    # Add finale flag
+    for schedule in schedules:
+        total_eps = schedule.get("total_episodes")
+        ep_num = schedule.get("episode")
+        if total_eps and ep_num and ep_num == total_eps:
+            schedule["is_finale"] = True
+        else:
+            schedule["is_finale"] = False
+
+    return schedules
+
+
+def get_finale_episodes_this_week() -> list[dict]:
+    """
+    Get only FINALE episodes (last episode of a series) airing this week.
+    Use for "which anime are having their final episode this week".
+    """
+    start_time, end_time = get_week_range(0)
+    schedules = _run_async(get_weekly_airing_schedule(start_time, end_time))
+
+    finales = []
+    for schedule in schedules:
+        total_eps = schedule.get("total_episodes")
+        ep_num = schedule.get("episode")
+
+        if total_eps and ep_num and ep_num == total_eps:
+            schedule["is_finale"] = True
+            airing_time = datetime.fromtimestamp(schedule['airing_at'], tz=timezone.utc)
+            schedule["airing_date"] = airing_time.strftime("%Y-%m-%d")
+            schedule["airing_day"] = airing_time.strftime("%A")
+            finales.append(schedule)
+
+    # Sort by airing time
+    finales.sort(key=lambda x: x['airing_at'])
+
+    return finales
+
+
+def search_anime_advanced(
+    query: Optional[str] = None,
+    genres: Optional[list[str]] = None,
+    min_score: Optional[float] = None,
+    status: Optional[str] = None,
+    season: Optional[str] = None,
+    year: Optional[int] = None,
+    include_adult: bool = True,
+    limit: int = 20
+) -> list[dict]:
+    """
+    Advanced anime search with multiple filters.
+    Use when user wants to filter by multiple criteria.
+    """
+    df = _load_anime_database()
+    if df is None:
+        return [{"error": "No cached data available"}]
+
+    filtered = df.copy()
+
+    # Apply filters
+    if query:
+        query_lower = query.lower()
+        filtered = filtered[
+            filtered['title_lower'].str.contains(query_lower, na=False) |
+            filtered['english_title_lower'].str.contains(query_lower, na=False)
+        ]
+
+    if min_score:
+        filtered = filtered[filtered['score'] >= min_score]
+
+    if status:
+        filtered = filtered[filtered['status'] == status.upper()]
+
+    if season:
+        filtered = filtered[filtered['season'] == season.upper()]
+
+    if year:
+        filtered = filtered[filtered['season_year'] == year]
+
+    if not include_adult:
+        filtered = filtered[filtered['is_adult'] != True]
+
+    # Genre filter
+    if genres:
+        target_genres = [g.lower() for g in genres]
+
+        def has_genres(row):
+            anime_genres = [g.lower() for g in _parse_genres(row.get('genres', ''))]
+            return any(tg in ag for tg in target_genres for ag in anime_genres)
+
+        filtered = filtered[filtered.apply(has_genres, axis=1)]
+
+    # Sort by score
+    sorted_df = filtered.sort_values(['score', 'members'], ascending=False)
+
+    results = []
+    for _, row in sorted_df.head(limit).iterrows():
+        results.append(_format_anime_result(row))
+
+    return results
 
 
 def get_weekly_schedule(weeks_offset: int = 0) -> dict:
@@ -468,17 +947,140 @@ def get_weekly_schedule(weeks_offset: int = 0) -> dict:
 # Tool definitions for Gemini
 TOOL_DEFINITIONS = [
     {
-        "name": "search_anime_cache",
-        "description": "Search for anime by title in cached CSV data. Fast but may not have latest airing info. Use for initial lookups.",
+        "name": "get_anime_details",
+        "description": "Get comprehensive details about an anime including synopsis, genres, score, studios, and more. Use when user asks what an anime is about, its description, rating, or wants detailed info.",
         "parameters": {
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Anime title to search for (partial match supported)"
-                }
+                "query": {"type": "string", "description": "Anime title to search for"}
             },
             "required": ["query"]
+        }
+    },
+    {
+        "name": "get_anime_by_genre",
+        "description": "Get anime that match specified genres. Use when user asks for anime by genre like 'action anime', 'romance recommendations', etc.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "genres": {"type": "array", "items": {"type": "string"}, "description": "List of genres to match (e.g., ['Action', 'Fantasy'])"},
+                "min_score": {"type": "number", "description": "Minimum score filter (0-100)"},
+                "limit": {"type": "integer", "description": "Max results to return (default 20)"},
+                "include_adult": {"type": "boolean", "description": "Include adult/18+ content (default true)"}
+            },
+            "required": ["genres"]
+        }
+    },
+    {
+        "name": "get_top_anime",
+        "description": "Get highest rated anime above a score threshold. Use for 'best anime', 'top rated', or quality recommendations.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "min_score": {"type": "number", "description": "Minimum score (default 70)"},
+                "limit": {"type": "integer", "description": "Max results (default 20)"},
+                "status": {"type": "string", "description": "Filter by status: FINISHED, RELEASING, NOT_YET_RELEASED"},
+                "include_adult": {"type": "boolean", "description": "Include adult content (default true)"}
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "get_similar_anime",
+        "description": "Get anime similar to a given title based on shared genres and tags. Use for 'anime like X' or 'similar to X' requests.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "anime_title": {"type": "string", "description": "Title of anime to find similar shows for"},
+                "limit": {"type": "integer", "description": "Max recommendations (default 10)"},
+                "min_score": {"type": "number", "description": "Minimum score filter (default 60)"},
+                "include_adult": {"type": "boolean", "description": "Include adult content (default true)"}
+            },
+            "required": ["anime_title"]
+        }
+    },
+    {
+        "name": "get_anime_ending_on_date",
+        "description": "Get anime having their FINAL episode on a specific date. Use for 'which anime ending today/tomorrow' queries. Returns only anime with finale on that exact date.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "target_date": {"type": "string", "description": "Date: 'today', 'tomorrow', 'yesterday', or YYYY-MM-DD"}
+            },
+            "required": ["target_date"]
+        }
+    },
+    {
+        "name": "get_anime_ending_in_range",
+        "description": "Get anime finishing within a date range. Use for 'finishing this week', 'ending this month' queries.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "start_date": {"type": "string", "description": "Start: 'today' or YYYY-MM-DD"},
+                "end_date": {"type": "string", "description": "End: 'today', '+7days', '+30days', or YYYY-MM-DD"}
+            },
+            "required": ["start_date", "end_date"]
+        }
+    },
+    {
+        "name": "get_episodes_airing_on_date",
+        "description": "Get all episodes (not just finales) airing on a date. Use for 'what airs today/tomorrow' or schedule queries.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "target_date": {"type": "string", "description": "Date: 'today', 'tomorrow', or YYYY-MM-DD"}
+            },
+            "required": ["target_date"]
+        }
+    },
+    {
+        "name": "get_finale_episodes_this_week",
+        "description": "Get only FINALE episodes airing this week. Use for 'which anime have final episode this week' queries.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "search_anime_advanced",
+        "description": "Advanced search with multiple filters: title, genres, score, status, season, year. Use for complex queries.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Title search (optional)"},
+                "genres": {"type": "array", "items": {"type": "string"}, "description": "Genre filter"},
+                "min_score": {"type": "number", "description": "Minimum score"},
+                "status": {"type": "string", "description": "Status: FINISHED, RELEASING, NOT_YET_RELEASED"},
+                "season": {"type": "string", "description": "Season: WINTER, SPRING, SUMMER, FALL"},
+                "year": {"type": "integer", "description": "Year"},
+                "include_adult": {"type": "boolean", "description": "Include adult content"},
+                "limit": {"type": "integer", "description": "Max results"}
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "get_season_anime",
+        "description": "Get all anime from a specific season with episode predictions. Use for seasonal overviews.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "season": {"type": "string", "description": "Season: WINTER, SPRING, SUMMER, FALL"},
+                "year": {"type": "integer", "description": "Year (e.g., 2025)"}
+            },
+            "required": ["season", "year"]
+        }
+    },
+    {
+        "name": "get_weekly_schedule",
+        "description": "Get weekly airing schedule grouped by day. Use for 'what airs this week' or schedule views.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "weeks_offset": {"type": "integer", "description": "Week offset: 0=current, 1=next, -1=last week"}
+            },
+            "required": []
         }
     },
     {
@@ -487,79 +1089,44 @@ TOOL_DEFINITIONS = [
         "parameters": {
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Anime title to search for"
-                }
+                "query": {"type": "string", "description": "Anime title to search for"}
             },
             "required": ["query"]
         }
     },
     {
-        "name": "get_anime_schedule",
-        "description": "Get detailed schedule info for an anime by its AniList ID. Use after finding anime via search.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "anime_id": {
-                    "type": "integer",
-                    "description": "AniList anime ID"
-                }
-            },
-            "required": ["anime_id"]
-        }
-    },
-    {
         "name": "predict_completion",
-        "description": "Calculate predicted completion date for an anime. Use with data from search or schedule tools.",
+        "description": "Calculate predicted completion date for an anime. Use with data from search tools.",
         "parameters": {
             "type": "object",
             "properties": {
                 "anime_id": {"type": "integer", "description": "AniList anime ID"},
                 "title": {"type": "string", "description": "Anime title"},
-                "status": {"type": "string", "description": "Status: FINISHED, RELEASING, NOT_YET_RELEASED, CANCELLED, HIATUS"},
+                "status": {"type": "string", "description": "Status: FINISHED, RELEASING, NOT_YET_RELEASED"},
                 "current_episode": {"type": "integer", "description": "Latest aired episode"},
                 "total_episodes": {"type": "integer", "description": "Total planned episodes"},
                 "end_date": {"type": "string", "description": "Known end date (YYYY-MM-DD)"},
-                "predicted_end_from_schedule": {"type": "string", "description": "AniList's scheduled end date (YYYY-MM-DD)"},
-                "next_airing_at": {"type": "integer", "description": "Unix timestamp of next episode airing"}
+                "predicted_end_from_schedule": {"type": "string", "description": "AniList's scheduled end date"},
+                "next_airing_at": {"type": "integer", "description": "Unix timestamp of next episode"}
             },
             "required": ["anime_id", "title", "status"]
-        }
-    },
-    {
-        "name": "get_season_anime",
-        "description": "Get all anime from a specific season with predictions. Use for seasonal queries.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "season": {"type": "string", "description": "Season: Winter, Spring, Summer, Fall"},
-                "year": {"type": "integer", "description": "Year (e.g., 2025)"}
-            },
-            "required": ["season", "year"]
-        }
-    },
-    {
-        "name": "get_bingeable_anime",
-        "description": "Get anime that are finished or will finish by a date. Perfect for finding binge-watchable shows.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "season": {"type": "string", "description": "Season: Winter, Spring, Summer, Fall"},
-                "year": {"type": "integer", "description": "Year (e.g., 2025)"},
-                "by_date": {"type": "string", "description": "Cutoff date (YYYY-MM-DD). Shows finishing by this date."}
-            },
-            "required": ["season", "year"]
         }
     }
 ]
 
 # Map tool names to functions
 TOOL_FUNCTIONS = {
-    "search_anime_cache": search_anime_cache,
-    "search_anime": search_anime,
-    "get_anime_schedule": get_anime_schedule,
-    "predict_completion": predict_completion,
+    "get_anime_details": get_anime_details,
+    "get_anime_by_genre": get_anime_by_genre,
+    "get_top_anime": get_top_anime,
+    "get_similar_anime": get_similar_anime,
+    "get_anime_ending_on_date": get_anime_ending_on_date,
+    "get_anime_ending_in_range": get_anime_ending_in_range,
+    "get_episodes_airing_on_date": get_episodes_airing_on_date,
+    "get_finale_episodes_this_week": get_finale_episodes_this_week,
+    "search_anime_advanced": search_anime_advanced,
     "get_season_anime": get_season_anime,
-    "get_bingeable_anime": get_bingeable_anime,
+    "get_weekly_schedule": get_weekly_schedule,
+    "search_anime": search_anime,
+    "predict_completion": predict_completion,
 }

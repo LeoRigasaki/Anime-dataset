@@ -29,32 +29,43 @@ def _get_current_season() -> tuple[str, int]:
 
 # System prompt defining the agent's behavior
 _season, _year = _get_current_season()
-SYSTEM_PROMPT = f"""You are AnimeScheduleAgent, an AI assistant that helps users find out when anime will finish airing.
+SYSTEM_PROMPT = f"""You are AnimeScheduleAgent, an AI assistant that helps users with anime information, schedules, and recommendations.
 
 TODAY'S DATE: {date.today().isoformat()}
 CURRENT ANIME SEASON: {_season} {_year}
 
-USER CONTEXT:
-The user waits for anime to COMPLETELY finish airing before watching. They want to know:
-- When specific anime will finish
-- Which anime from a season they can binge now
-- What's finishing soon
+AVAILABLE TOOLS (use the right tool for each query type):
+
+1. SCHEDULE/TIMING QUERIES:
+   - "which anime ending today/tomorrow?" → get_anime_ending_on_date(target_date="today"/"tomorrow")
+   - "which anime finishing this week?" → get_anime_ending_in_range(start_date="today", end_date="+7days")
+   - "what episodes air today?" → get_episodes_airing_on_date(target_date="today")
+   - "which anime have final episode this week?" → get_finale_episodes_this_week()
+   - "weekly schedule" → get_weekly_schedule()
+
+2. ANIME INFO QUERIES:
+   - "what is X about?" / "tell me about X" → get_anime_details(query="X")
+   - "when will X finish?" → search_anime(query="X") then check predicted_completion
+
+3. RECOMMENDATION QUERIES:
+   - "anime like X" / "similar to X" → get_similar_anime(anime_title="X")
+   - "action anime" / "romance recommendations" → get_anime_by_genre(genres=["Action"])
+   - "best anime" / "top rated" → get_top_anime(min_score=80)
+
+4. SEARCH/FILTER QUERIES:
+   - Complex filters → search_anime_advanced(genres=[], min_score=X, status="FINISHED", etc.)
+   - Season overview → get_season_anime(season="{_season}", year={_year})
 
 IMPORTANT RULES:
-1. When user asks about "this week", "this month", "current season" - use TODAY'S DATE to calculate
-2. For "What's finishing this week?" - use get_bingeable_anime with current season and a date 7 days from today
-3. For seasonal queries without year specified - assume current season ({_season} {_year})
-4. Always call tools first, don't ask clarifying questions unless truly necessary
-
-YOUR APPROACH:
-1. For specific anime: search_anime → predict_completion
-2. For "what's finishing soon/this week": get_bingeable_anime with by_date parameter
-3. For seasonal overview: get_season_anime
+1. ALWAYS use the correct tool for the query type - don't use get_season_anime for "ending tomorrow" queries
+2. For date queries, calculate from TODAY'S DATE ({date.today().isoformat()})
+3. For seasonal queries without year, assume current season ({_season} {_year})
+4. Call tools first, don't ask clarifying questions unless truly necessary
 
 RESPONSE FORMAT:
-- Lead with the answer (dates, titles)
-- Be concise - user wants facts, not explanations
-- Include confidence level for predictions"""
+- Lead with the answer (dates, titles, genres)
+- Be concise - user wants facts
+- For recommendations, mention why they're similar (shared genres/tags)"""
 
 
 class AnimeScheduleAgent:
@@ -198,11 +209,12 @@ class AnimeScheduleAgent:
                                     'cover_image': item.get('cover_image'),
                                     'status': item.get('status'),
                                     'predicted_completion': item.get('predicted_completion'),
-                                    'confidence': item.get('confidence'),
                                     'score': item.get('score'),
-                                    'episodes': item.get('episodes'),
+                                    'episodes': item.get('episodes') or item.get('total_episodes'),
                                     'current_episode': item.get('current_episode'),
-                                    'is_bingeable': item.get('is_bingeable')
+                                    'genres': item.get('genres'),
+                                    'synopsis': item.get('synopsis'),
+                                    'is_adult': item.get('is_adult'),
                                 }
                                 # Remove None values to keep response clean
                                 anime_entry = {k: v for k, v in anime_entry.items() if v is not None}
@@ -216,11 +228,12 @@ class AnimeScheduleAgent:
                             'cover_image': data.get('cover_image'),
                             'status': data.get('status'),
                             'predicted_completion': data.get('predicted_completion'),
-                            'confidence': data.get('confidence'),
                             'score': data.get('score'),
-                            'episodes': data.get('episodes'),
+                            'episodes': data.get('episodes') or data.get('total_episodes'),
                             'current_episode': data.get('current_episode'),
-                            'is_bingeable': data.get('is_bingeable')
+                            'genres': data.get('genres'),
+                            'synopsis': data.get('synopsis'),
+                            'is_adult': data.get('is_adult'),
                         }
                         # Remove None values
                         anime_entry = {k: v for k, v in anime_entry.items() if v is not None}
