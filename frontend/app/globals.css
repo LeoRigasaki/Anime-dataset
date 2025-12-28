@@ -1,29 +1,59 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   MIDNIGHT SAKURA - Premium Dark Theme for AnimeScheduleAgent
+   A cinematic dark mode with cherry blossom accents and atmospheric depth
+   ═══════════════════════════════════════════════════════════════════════════ */
+
 @layer base {
   :root {
-    --background: 224 71.4% 4.1%;
-    --foreground: 210 20% 98%;
-    --card: 224 71.4% 4.1%;
-    --card-foreground: 210 20% 98%;
-    --popover: 224 71.4% 4.1%;
-    --popover-foreground: 210 20% 98%;
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 222.2 47.4% 11.2%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
+    /* Core Dark Palette */
+    --background: 240 10% 4%;           /* #08080c - Near black */
+    --foreground: 210 40% 96%;          /* #f0f4f8 - Soft white */
+
+    /* Surfaces & Cards */
+    --card: 230 15% 7%;                 /* #0f1117 - Dark slate */
+    --card-foreground: 210 40% 96%;
+    --popover: 230 15% 7%;
+    --popover-foreground: 210 40% 96%;
+
+    /* Primary - Cherry Blossom Pink */
+    --primary: 350 100% 71%;            /* #ff6b8a - Warm coral/cherry */
+    --primary-foreground: 240 10% 4%;
+
+    /* Secondary - Deep Slate */
+    --secondary: 230 20% 12%;           /* #181c26 */
+    --secondary-foreground: 210 40% 96%;
+
+    /* Muted */
+    --muted: 230 15% 15%;               /* #1f232d */
+    --muted-foreground: 220 15% 55%;    /* #8b93a8 - Soft gray-blue */
+
+    /* Accent - Cyan Glow */
+    --accent: 190 100% 50%;             /* #00d4ff - Cyan */
+    --accent-foreground: 240 10% 4%;
+
+    /* Semantic Colors */
+    --destructive: 0 72% 51%;
     --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 224.3 76.3% 48%;
-    --radius: 0.5rem;
+
+    /* Borders & Inputs */
+    --border: 230 15% 18%;              /* Subtle border */
+    --input: 230 15% 15%;
+    --ring: 350 100% 71%;               /* Cherry focus ring */
+
+    --radius: 0.75rem;
+
+    /* Custom Extended Palette */
+    --glow-primary: 350 100% 71%;
+    --glow-cyan: 190 100% 50%;
+    --success: 160 84% 39%;             /* #10b981 - Emerald */
+    --warning: 38 92% 50%;              /* #f59e0b - Amber */
+    --info: 217 91% 60%;                /* #3b82f6 - Blue */
   }
 }
 
@@ -31,36 +61,438 @@
   * {
     @apply border-border;
   }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+
+    /* Subtle noise texture for depth */
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(255, 107, 138, 0.08) 0%, transparent 50%),
+      url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+    background-attachment: fixed;
+  }
+
+  /* Heading fonts */
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Outfit', system-ui, sans-serif;
+    @apply tracking-tight;
   }
 }
 
-/* Custom scrollbar */
+/* ═══════════════════════════════════════════════════════════════════════════
+   SCROLLBAR STYLING
+   ═══════════════════════════════════════════════════════════════════════════ */
+
 ::-webkit-scrollbar {
   width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: transparent;
+  @apply bg-transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #4b5563;
-  border-radius: 4px;
+  @apply bg-muted-foreground/20 rounded-full;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
-/* Markdown-like formatting for responses */
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-muted-foreground/40;
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.2) transparent;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   GLASSMORPHISM & CARD EFFECTS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.glass {
+  @apply bg-card/60 backdrop-blur-xl border border-white/5;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset,
+    0 4px 24px -4px rgba(0, 0, 0, 0.4);
+}
+
+.glass-subtle {
+  @apply bg-card/40 backdrop-blur-md border border-white/[0.02];
+}
+
+.glass-card {
+  @apply bg-card/70 backdrop-blur-xl rounded-xl;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.02) inset,
+    0 8px 32px -8px rgba(0, 0, 0, 0.5),
+    0 0 80px -20px rgba(255, 107, 138, 0.1);
+}
+
+/* Card hover glow effect */
+.card-glow {
+  @apply relative overflow-hidden;
+  transition: all 0.3s ease;
+}
+
+.card-glow::before {
+  content: '';
+  @apply absolute inset-0 opacity-0 transition-opacity duration-300;
+  background: radial-gradient(
+    600px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+    rgba(255, 107, 138, 0.06),
+    transparent 40%
+  );
+}
+
+.card-glow:hover::before {
+  @apply opacity-100;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BUTTONS & INTERACTIVE ELEMENTS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.btn-glow {
+  @apply relative overflow-hidden;
+  box-shadow: 0 0 20px -5px hsl(var(--primary) / 0.3);
+  transition: all 0.2s ease;
+}
+
+.btn-glow:hover {
+  box-shadow:
+    0 0 30px -5px hsl(var(--primary) / 0.5),
+    0 0 60px -10px hsl(var(--primary) / 0.3);
+  transform: translateY(-1px);
+}
+
+.btn-glow:active {
+  transform: translateY(0);
+}
+
+/* Tab active indicator */
+.tab-active {
+  @apply relative;
+}
+
+.tab-active::after {
+  content: '';
+  @apply absolute bottom-0 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-primary rounded-full;
+  box-shadow: 0 0 10px 2px hsl(var(--primary) / 0.5);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ANIME CARD STYLING
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.anime-card {
+  @apply relative rounded-xl overflow-hidden;
+  background: linear-gradient(
+    135deg,
+    hsl(var(--card)) 0%,
+    hsl(var(--card) / 0.8) 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.anime-card:hover {
+  transform: translateY(-4px) scale(1.02);
+  border-color: rgba(255, 107, 138, 0.2);
+  box-shadow:
+    0 20px 40px -15px rgba(0, 0, 0, 0.5),
+    0 0 60px -20px rgba(255, 107, 138, 0.3);
+}
+
+.anime-card-image {
+  @apply relative overflow-hidden;
+}
+
+.anime-card-image::after {
+  content: '';
+  @apply absolute inset-0;
+  background: linear-gradient(
+    to top,
+    hsl(var(--card)) 0%,
+    hsl(var(--card) / 0.8) 15%,
+    transparent 50%
+  );
+}
+
+/* Score badge glow */
+.score-badge {
+  @apply px-2 py-1 rounded-lg text-xs font-bold;
+  background: linear-gradient(135deg, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0.5));
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* Status badges */
+.status-airing {
+  @apply bg-emerald-500/90 text-white;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.4);
+}
+
+.status-finished {
+  @apply bg-blue-500/90 text-white;
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.4);
+}
+
+.status-upcoming {
+  @apply bg-amber-500/90 text-white;
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.4);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CALENDAR STYLING
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.calendar-day {
+  @apply relative rounded-lg transition-all duration-200;
+  background: hsl(var(--card) / 0.5);
+  border: 1px solid transparent;
+}
+
+.calendar-day:hover {
+  background: hsl(var(--card));
+  border-color: rgba(255, 255, 255, 0.05);
+}
+
+.calendar-day-today {
+  @apply ring-2 ring-primary/60;
+  background: hsl(var(--primary) / 0.1);
+}
+
+.calendar-day-selected {
+  @apply ring-2 ring-accent;
+  background: hsl(var(--accent) / 0.1);
+}
+
+.calendar-day-has-anime {
+  @apply cursor-pointer;
+}
+
+.calendar-day-has-anime:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px -8px rgba(0, 0, 0, 0.4);
+}
+
+/* Finale indicator */
+.finale-badge {
+  @apply bg-amber-500 text-white font-bold;
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.5);
+  animation: pulse-subtle 2s ease-in-out infinite;
+}
+
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CHAT INTERFACE
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.chat-bubble-user {
+  @apply bg-primary text-primary-foreground rounded-2xl rounded-br-md;
+  box-shadow: 0 4px 20px -4px hsl(var(--primary) / 0.3);
+}
+
+.chat-bubble-assistant {
+  @apply bg-muted/80 backdrop-blur-sm text-foreground rounded-2xl rounded-bl-md;
+  border: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.chat-input {
+  @apply bg-card/80 backdrop-blur-xl border border-white/5 rounded-xl;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.02) inset,
+    0 -4px 20px -4px rgba(0, 0, 0, 0.3);
+}
+
+.chat-input:focus-within {
+  border-color: hsl(var(--primary) / 0.3);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.02) inset,
+    0 0 0 3px hsl(var(--primary) / 0.1),
+    0 -4px 20px -4px rgba(0, 0, 0, 0.3);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LOADING ANIMATIONS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.shimmer {
+  @apply relative overflow-hidden;
+  background: linear-gradient(
+    90deg,
+    hsl(var(--muted)) 0%,
+    hsl(var(--muted-foreground) / 0.1) 50%,
+    hsl(var(--muted)) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.loading-dot {
+  @apply w-2 h-2 rounded-full bg-primary;
+  animation: loading-bounce 1.4s ease-in-out infinite both;
+}
+
+.loading-dot:nth-child(1) { animation-delay: 0s; }
+.loading-dot:nth-child(2) { animation-delay: 0.16s; }
+.loading-dot:nth-child(3) { animation-delay: 0.32s; }
+
+@keyframes loading-bounce {
+  0%, 80%, 100% {
+    transform: scale(0.6);
+    opacity: 0.5;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Progress bar glow */
+.progress-glow {
+  @apply bg-primary rounded-full;
+  box-shadow:
+    0 0 10px hsl(var(--primary) / 0.5),
+    0 0 20px hsl(var(--primary) / 0.3);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   HEADER & NAVIGATION
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.header-blur {
+  @apply bg-background/80 backdrop-blur-xl;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  box-shadow: 0 4px 30px -10px rgba(0, 0, 0, 0.5);
+}
+
+.nav-pill {
+  @apply rounded-lg px-4 py-2 text-sm font-medium transition-all duration-200;
+}
+
+.nav-pill-active {
+  @apply bg-primary text-primary-foreground;
+  box-shadow: 0 0 20px -5px hsl(var(--primary) / 0.5);
+}
+
+.nav-pill-inactive {
+  @apply text-muted-foreground hover:text-foreground hover:bg-white/5;
+}
+
+/* Status indicator pulse */
+.status-online {
+  @apply bg-emerald-500;
+  animation: status-pulse 2s ease-in-out infinite;
+}
+
+@keyframes status-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+  50% { box-shadow: 0 0 0 4px rgba(16, 185, 129, 0); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MARKDOWN FORMATTING
+   ═══════════════════════════════════════════════════════════════════════════ */
+
 .response-text strong {
-  font-weight: 600;
+  @apply font-semibold text-primary;
+}
+
+.response-text em {
+  @apply italic text-muted-foreground;
 }
 
 .response-text ul {
-  list-style-type: disc;
-  padding-left: 1.5rem;
-  margin: 0.5rem 0;
+  @apply list-none space-y-1 my-2;
 }
 
 .response-text li {
-  margin: 0.25rem 0;
+  @apply relative pl-4;
+}
+
+.response-text li::before {
+  content: '';
+  @apply absolute left-0 top-2.5 w-1.5 h-1.5 rounded-full bg-primary/60;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   UTILITY CLASSES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.text-gradient {
+  @apply bg-clip-text text-transparent;
+  background-image: linear-gradient(
+    135deg,
+    hsl(var(--primary)) 0%,
+    hsl(var(--accent)) 100%
+  );
+}
+
+.border-gradient {
+  @apply relative;
+  background: linear-gradient(hsl(var(--card)), hsl(var(--card))) padding-box,
+              linear-gradient(135deg, hsl(var(--primary) / 0.3), hsl(var(--accent) / 0.3)) border-box;
+  border: 1px solid transparent;
+}
+
+.glow-text {
+  text-shadow: 0 0 20px hsl(var(--primary) / 0.5);
+}
+
+/* Hide scrollbar but keep functionality */
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Focus visible styles */
+.focus-ring {
+  @apply outline-none ring-2 ring-primary/50 ring-offset-2 ring-offset-background;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   RESPONSIVE ADJUSTMENTS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 640px) {
+  .anime-card:hover {
+    transform: none;
+  }
+
+  .calendar-day-has-anime:hover {
+    transform: none;
+  }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

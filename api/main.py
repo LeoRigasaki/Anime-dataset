@@ -2,14 +2,20 @@
 import os
 import sys
 import re
+import time
 from contextlib import asynccontextmanager
 from typing import Optional
 from datetime import date, timedelta
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+# Simple in-memory cache for API responses
+_api_cache: dict[str, tuple[float, dict]] = {}
+_API_CACHE_TTL = 120  # 2 minutes cache for API responses
 
 # Add parent to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -203,13 +209,29 @@ async def query_agent(request: QueryRequest):
 
 @app.get("/anime/seasonal")
 async def get_seasonal(season: Optional[str] = None, year: Optional[int] = None):
-    """Get all anime from a season with predictions."""
+    """Get all anime from a season with predictions. Cached for 2 minutes."""
     if not season or not year:
         season, year = _get_current_season()
 
+    cache_key = f"seasonal_{season}_{year}"
+
+    # Check cache first
+    if cache_key in _api_cache:
+        cached_time, cached_data = _api_cache[cache_key]
+        if time.time() - cached_time < _API_CACHE_TTL:
+            return JSONResponse(
+                content=cached_data,
+                headers={"X-Cache": "HIT", "Cache-Control": "max-age=120"}
+            )
+
     try:
         anime_list = get_season_anime(season, year)
-        return {"season": f"{season} {year}", "anime": anime_list}
+        result = {"season": f"{season} {year}", "anime": anime_list}
+        _api_cache[cache_key] = (time.time(), result)
+        return JSONResponse(
+            content=result,
+            headers={"X-Cache": "MISS", "Cache-Control": "max-age=120"}
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -218,6 +240,7 @@ async def get_seasonal(season: Optional[str] = None, year: Optional[int] = None)
 async def get_weekly(weeks_offset: int = 0):
     """
     Get all anime episodes airing in a specific week, grouped by day (AniChart-style).
+    Results are cached for 2 minutes to reduce API load.
 
     Args:
         weeks_offset: Number of weeks to offset (0 = current week, 1 = next week, -1 = last week)
@@ -225,11 +248,41 @@ async def get_weekly(weeks_offset: int = 0):
     Returns:
         Weekly schedule grouped by day with airing times
     """
+    cache_key = f"weekly_{weeks_offset}"
+
+    # Check cache first
+    if cache_key in _api_cache:
+        cached_time, cached_data = _api_cache[cache_key]
+        if time.time() - cached_time < _API_CACHE_TTL:
+            return JSONResponse(
+                content=cached_data,
+                headers={"X-Cache": "HIT", "Cache-Control": "max-age=120"}
+            )
+
     try:
         schedule_data = get_weekly_schedule(weeks_offset)
-        return schedule_data
+        # Cache the result
+        _api_cache[cache_key] = (time.time(), schedule_data)
+        return JSONResponse(
+            content=schedule_data,
+            headers={"X-Cache": "MISS", "Cache-Control": "max-age=120"}
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Return empty schedule on error instead of 500
+        print(f"Error fetching weekly schedule: {e}")
+        return JSONResponse(
+            content={
+                "week_start": "",
+                "week_end": "",
+                "week_label": "Error loading schedule",
+                "total_schedules": 0,
+                "schedule": {},
+                "days_with_anime": [],
+                "error": str(e)
+            },
+            status_code=200,  # Return 200 with error info instead of 500
+            headers={"X-Cache": "ERROR"}
+        )
 
 
 @app.get("/anime/search/{query}")

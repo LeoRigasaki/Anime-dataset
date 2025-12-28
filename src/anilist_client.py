@@ -4,12 +4,17 @@ import time
 import httpx
 from datetime import datetime, timezone
 from typing import Optional
+from functools import lru_cache
 
 ANILIST_URL = "https://graphql.anilist.co"
 
-# Rate limiting
+# Rate limiting - more conservative to avoid 429 errors
 _last_request_time = 0
-_MIN_REQUEST_INTERVAL = 0.7  # ~85 requests/min max
+_MIN_REQUEST_INTERVAL = 1.0  # ~60 requests/min max (more conservative)
+
+# Simple in-memory cache for schedule data
+_schedule_cache: dict[tuple[int, int], tuple[float, list[dict]]] = {}
+_CACHE_TTL = 300  # 5 minutes cache
 
 
 async def _rate_limit():
@@ -136,21 +141,36 @@ async def get_anime_by_id(anime_id: int) -> Optional[dict]:
             return {"error": str(e)}
 
 
-async def get_weekly_airing_schedule(start_timestamp: int, end_timestamp: int, per_page: int = 150) -> list[dict]:
+async def get_weekly_airing_schedule(start_timestamp: int, end_timestamp: int, per_page: int = 50) -> list[dict]:
     """
     Get all anime episodes airing in a specific time range (AniChart-style).
+    Fetches all pages to ensure no episodes are missed.
+    Results are cached for 5 minutes to reduce API load.
 
     Args:
         start_timestamp: Start of time range (Unix timestamp)
         end_timestamp: End of time range (Unix timestamp)
-        per_page: Number of results per page (max 150)
+        per_page: Number of results per page (max 50 for stability)
 
     Returns:
         List of airing schedule items with media details
     """
+    # Check cache first
+    cache_key = (start_timestamp, end_timestamp)
+    if cache_key in _schedule_cache:
+        cached_time, cached_data = _schedule_cache[cache_key]
+        if time.time() - cached_time < _CACHE_TTL:
+            # Return cached data with updated time_until_airing
+            now = int(time.time())
+            return [
+                {**item, "time_until_airing": item["airing_at"] - now,
+                 "airs_in_human": _format_countdown(item["airing_at"] - now)}
+                for item in cached_data
+            ]
+
     query = """
-    query WeeklySchedule($startTime: Int!, $endTime: Int!, $perPage: Int!) {
-      Page(page: 1, perPage: $perPage) {
+    query WeeklySchedule($startTime: Int!, $endTime: Int!, $perPage: Int!, $page: Int!) {
+      Page(page: $page, perPage: $perPage) {
         pageInfo {
           total
           perPage
@@ -194,50 +214,97 @@ async def get_weekly_airing_schedule(start_timestamp: int, end_timestamp: int, p
     }
     """
 
-    variables = {
-        "startTime": start_timestamp,
-        "endTime": end_timestamp,
-        "perPage": per_page
-    }
-
-    # Apply rate limiting
-    await _rate_limit()
+    all_results = []
+    page = 1
+    max_pages = 5  # Reduced from 10 - most weeks have < 250 episodes
+    max_retries = 3
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(ANILIST_URL, json={"query": query, "variables": variables})
-        response.raise_for_status()
-        data = response.json()
+        while page <= max_pages:
+            variables = {
+                "startTime": start_timestamp,
+                "endTime": end_timestamp,
+                "perPage": per_page,
+                "page": page
+            }
 
-        if "errors" in data:
-            raise Exception(f"AniList API error: {data['errors']}")
+            # Retry logic with exponential backoff
+            for retry in range(max_retries):
+                try:
+                    # Apply rate limiting
+                    await _rate_limit()
 
-        schedules = data["data"]["Page"]["airingSchedules"]
+                    response = await client.post(ANILIST_URL, json={"query": query, "variables": variables})
 
-        # Transform the data
-        result = []
-        for schedule in schedules:
-            media = schedule["media"]
-            studios = [s["name"] for s in media.get("studios", {}).get("nodes", [])]
+                    # Handle rate limiting (429)
+                    if response.status_code == 429:
+                        wait_time = 2 ** (retry + 1)  # 2, 4, 8 seconds
+                        print(f"Rate limited, waiting {wait_time}s before retry...")
+                        await asyncio.sleep(wait_time)
+                        continue
 
-            result.append({
-                "schedule_id": schedule["id"],
-                "airing_at": schedule["airingAt"],
-                "time_until_airing": schedule["timeUntilAiring"],
-                "episode": schedule["episode"],
-                "anime_id": media["id"],
-                "title": media["title"].get("english") or media["title"].get("romaji"),
-                "title_romaji": media["title"].get("romaji"),
-                "cover_image": media["coverImage"].get("large") or media["coverImage"].get("medium"),
-                "status": media["status"],
-                "total_episodes": media.get("episodes"),
-                "score": media.get("averageScore"),
-                "genres": media.get("genres", []),
-                "format": media.get("format"),
-                "studios": studios,
-                "airs_in_human": _format_countdown(schedule["timeUntilAiring"])
-            })
+                    response.raise_for_status()
+                    data = response.json()
 
-        return result
+                    if "errors" in data:
+                        # Check if it's a rate limit error
+                        error_msg = str(data["errors"])
+                        if "rate" in error_msg.lower() or "limit" in error_msg.lower():
+                            wait_time = 2 ** (retry + 1)
+                            await asyncio.sleep(wait_time)
+                            continue
+                        raise Exception(f"AniList API error: {data['errors']}")
+
+                    break  # Success, exit retry loop
+
+                except httpx.HTTPStatusError as e:
+                    if retry < max_retries - 1:
+                        wait_time = 2 ** (retry + 1)
+                        await asyncio.sleep(wait_time)
+                        continue
+                    raise e
+            else:
+                # All retries exhausted
+                print(f"Failed to fetch page {page} after {max_retries} retries")
+                break
+
+            page_data = data["data"]["Page"]
+            schedules = page_data["airingSchedules"]
+            page_info = page_data["pageInfo"]
+
+            # Transform and add the data
+            for schedule in schedules:
+                media = schedule["media"]
+                studios = [s["name"] for s in media.get("studios", {}).get("nodes", [])]
+
+                all_results.append({
+                    "schedule_id": schedule["id"],
+                    "airing_at": schedule["airingAt"],
+                    "time_until_airing": schedule["timeUntilAiring"],
+                    "episode": schedule["episode"],
+                    "anime_id": media["id"],
+                    "title": media["title"].get("english") or media["title"].get("romaji"),
+                    "title_romaji": media["title"].get("romaji"),
+                    "cover_image": media["coverImage"].get("large") or media["coverImage"].get("medium"),
+                    "status": media["status"],
+                    "total_episodes": media.get("episodes"),
+                    "score": media.get("averageScore"),
+                    "genres": media.get("genres", []),
+                    "format": media.get("format"),
+                    "studios": studios,
+                    "airs_in_human": _format_countdown(schedule["timeUntilAiring"])
+                })
+
+            # Check if there are more pages
+            if not page_info.get("hasNextPage"):
+                break
+
+            page += 1
+
+    # Cache the results (store raw data for refresh)
+    _schedule_cache[cache_key] = (time.time(), all_results)
+
+    return all_results
 
 
 async def get_seasonal_anime(season: str, year: int) -> list[dict]:

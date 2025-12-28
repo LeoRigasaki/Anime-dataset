@@ -54,7 +54,8 @@ def _run_async(coro):
 
 def get_week_range(weeks_offset: int = 0) -> tuple[int, int]:
     """
-    Get start and end timestamps for a week.
+    Get start and end timestamps for a week in LOCAL timezone.
+    This ensures consistency with the frontend Schedule tab which uses local time.
 
     Args:
         weeks_offset: Number of weeks to offset (0 = current week, 1 = next week, -1 = last week)
@@ -62,7 +63,8 @@ def get_week_range(weeks_offset: int = 0) -> tuple[int, int]:
     Returns:
         Tuple of (start_timestamp, end_timestamp)
     """
-    now = datetime.now(timezone.utc)
+    # Use local timezone for consistency with frontend
+    now = datetime.now()
     # Start of week (Monday at 00:00)
     start_of_week = now - timedelta(days=now.weekday())
     start_of_week = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -76,7 +78,8 @@ def get_week_range(weeks_offset: int = 0) -> tuple[int, int]:
 
 def get_day_range(days_offset: int = 0) -> tuple[int, int]:
     """
-    Get start and end timestamps for a specific day.
+    Get start and end timestamps for a specific day in LOCAL timezone.
+    This ensures consistency with the frontend Schedule tab which uses local time.
 
     Args:
         days_offset: Number of days to offset (0 = today, 1 = tomorrow, -1 = yesterday)
@@ -84,7 +87,8 @@ def get_day_range(days_offset: int = 0) -> tuple[int, int]:
     Returns:
         Tuple of (start_timestamp, end_timestamp)
     """
-    now = datetime.now(timezone.utc)
+    # Use local timezone for consistency with frontend
+    now = datetime.now()
     target_day = now + timedelta(days=days_offset)
     start_of_day = target_day.replace(hour=0, minute=0, second=0, microsecond=0)
     end_of_day = start_of_day + timedelta(days=1)
@@ -94,7 +98,8 @@ def get_day_range(days_offset: int = 0) -> tuple[int, int]:
 
 def group_schedules_by_day(schedules: list[dict]) -> dict[str, list[dict]]:
     """
-    Group airing schedules by day of week.
+    Group airing schedules by day of week in LOCAL timezone.
+    This ensures consistency with the frontend Schedule tab which uses local time.
 
     Args:
         schedules: List of schedule items from get_weekly_airing_schedule
@@ -105,8 +110,8 @@ def group_schedules_by_day(schedules: list[dict]) -> dict[str, list[dict]]:
     schedule_by_day = defaultdict(list)
 
     for schedule in schedules:
-        # Convert timestamp to day name
-        airing_time = datetime.fromtimestamp(schedule['airing_at'], tz=timezone.utc)
+        # Convert timestamp to LOCAL day name (not UTC)
+        airing_time = datetime.fromtimestamp(schedule['airing_at'])  # Local timezone
         day_name = airing_time.strftime('%A').upper()  # MONDAY, TUESDAY, etc.
 
         # Determine if it's airing soon or already aired
