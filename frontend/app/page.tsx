@@ -1,8 +1,7 @@
 'use client'
 
-import { useState, useRef, useEffect, useMemo } from 'react'
-import { Calendar, Clock, Filter, PlayCircle, CheckCircle2, X, Sparkles, MessageSquare, Search, Send, Star } from 'lucide-react'
-import { Card, CardContent } from '@/components/ui/card'
+import { useState, useRef, useEffect, useCallback } from 'react'
+import { Calendar, Clock, Filter, PlayCircle, CheckCircle2, X, Sparkles, MessageSquare, Search, Send, Star, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -146,7 +145,14 @@ export default function Home() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [sortBy, setSortBy] = useState<SortOption>('popularity')
   const [seasonInfo, setSeasonInfo] = useState('')
+  const [selectedGenres, setSelectedGenres] = useState<string[]>([])
+  const [allGenres, setAllGenres] = useState<string[]>([])
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  const [totalAnime, setTotalAnime] = useState(0)
+  const [showGenreDropdown, setShowGenreDropdown] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const genreDropdownRef = useRef<HTMLDivElement>(null)
 
   // State persistence for schedule tab
   const [scheduleDate, setScheduleDate] = useState<Date>(new Date())
@@ -164,25 +170,66 @@ export default function Home() {
       .catch(() => setApiStatus('offline'))
   }, [])
 
+  // Fetch genre list on mount
   useEffect(() => {
-    if (tab === 'browse') {
-      loadAnimeData()
-    }
-  }, [tab])
+    fetch('/api/anime/genres')
+      .then(res => res.json())
+      .then(data => setAllGenres(data.genres || []))
+      .catch(() => {
+        setAllGenres(['Action', 'Adventure', 'Comedy', 'Drama', 'Fantasy',
+          'Horror', 'Mecha', 'Music', 'Mystery', 'Psychological',
+          'Romance', 'Sci-Fi', 'Slice of Life', 'Sports', 'Supernatural', 'Thriller'])
+      })
+  }, [])
 
-  const loadAnimeData = async () => {
+  // Close genre dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (genreDropdownRef.current && !genreDropdownRef.current.contains(event.target as Node)) {
+        setShowGenreDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const loadAnimeData = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`${API_URL}/anime/seasonal`)
+      const params = new URLSearchParams()
+      if (statusFilter !== 'all') {
+        const statusMap: Record<string, string> = {
+          releasing: 'RELEASING',
+          finished: 'FINISHED',
+          upcoming: 'NOT_YET_RELEASED',
+        }
+        params.set('status', statusMap[statusFilter])
+      }
+      if (selectedGenres.length > 0) {
+        params.set('genres', selectedGenres.join(','))
+      }
+      params.set('sort', sortBy)
+      params.set('page', String(currentPage))
+      params.set('limit', '30')
+
+      const res = await fetch(`/api/anime?${params.toString()}`)
       const data = await res.json()
       setAnimeList(data.anime || [])
       setSeasonInfo(data.season || '')
+      setTotalPages(data.totalPages || 1)
+      setTotalAnime(data.total || 0)
     } catch (error) {
       console.error('Failed to load anime:', error)
     } finally {
       setLoading(false)
     }
-  }
+  }, [statusFilter, selectedGenres, sortBy, currentPage])
+
+  useEffect(() => {
+    if (tab === 'browse') {
+      loadAnimeData()
+    }
+  }, [tab, loadAnimeData])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -225,36 +272,24 @@ export default function Home() {
     return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
   }
 
-  const filteredAnime = useMemo(() => {
-    let filtered = animeList
+  const handleGenreToggle = (genre: string) => {
+    setSelectedGenres(prev =>
+      prev.includes(genre)
+        ? prev.filter(g => g !== genre)
+        : [...prev, genre]
+    )
+    setCurrentPage(1)
+  }
 
-    switch (statusFilter) {
-      case 'releasing':
-        filtered = filtered.filter(a => a.status === 'RELEASING')
-        break
-      case 'finished':
-        filtered = filtered.filter(a => a.status === 'FINISHED')
-        break
-      case 'upcoming':
-        filtered = filtered.filter(a => a.status === 'NOT_YET_RELEASED')
-        break
-    }
+  const handleStatusFilterChange = (key: StatusFilter) => {
+    setStatusFilter(key)
+    setCurrentPage(1)
+  }
 
-    const sorted = [...filtered].sort((a, b) => {
-      switch (sortBy) {
-        case 'completion':
-          if (!a.predicted_completion) return 1
-          if (!b.predicted_completion) return -1
-          return a.predicted_completion.localeCompare(b.predicted_completion)
-        case 'score':
-          return (b.score || 0) - (a.score || 0)
-        default:
-          return 0
-      }
-    })
-
-    return sorted
-  }, [animeList, statusFilter, sortBy])
+  const handleSortChange = (value: string) => {
+    setSortBy(value as SortOption)
+    setCurrentPage(1)
+  }
 
   /* Premium Anime Card Component */
   const AnimeCard = ({ anime, index = 0 }: { anime: Anime; index?: number }) => (
@@ -445,7 +480,7 @@ export default function Home() {
                     {seasonInfo || 'Loading...'}
                   </h2>
                   <p className="text-muted-foreground mt-1">
-                    {filteredAnime.length} anime {statusFilter !== 'all' && `• ${statusFilter}`}
+                    {totalAnime} anime {statusFilter !== 'all' && `• ${statusFilter}`}
                   </p>
                 </div>
 
@@ -478,7 +513,7 @@ export default function Home() {
                       key={key}
                       variant={statusFilter === key ? 'default' : 'outline'}
                       size="sm"
-                      onClick={() => setStatusFilter(key as StatusFilter)}
+                      onClick={() => handleStatusFilterChange(key as StatusFilter)}
                       className={`shrink-0 ${
                         statusFilter === key
                           ? 'btn-glow'
@@ -491,14 +526,62 @@ export default function Home() {
                   ))}
                 </div>
 
+                {/* Genre Filter Dropdown */}
+                <div className="relative" ref={genreDropdownRef}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowGenreDropdown(!showGenreDropdown)}
+                    className={`shrink-0 ${
+                      selectedGenres.length > 0
+                        ? 'btn-glow'
+                        : 'glass-subtle border-white/5 hover:bg-white/5'
+                    }`}
+                  >
+                    <Filter className="w-3.5 h-3.5 mr-1.5" />
+                    Genres {selectedGenres.length > 0 && `(${selectedGenres.length})`}
+                  </Button>
+
+                  {showGenreDropdown && (
+                    <div className="absolute top-full mt-2 left-0 z-50 w-72 max-h-80 overflow-y-auto p-3 rounded-xl glass border border-white/10 shadow-xl">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-medium text-muted-foreground">Select Genres</span>
+                        {selectedGenres.length > 0 && (
+                          <button
+                            onClick={() => { setSelectedGenres([]); setCurrentPage(1) }}
+                            className="text-xs text-primary hover:underline"
+                          >
+                            Clear all
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {allGenres.map(genre => (
+                          <button
+                            key={genre}
+                            onClick={() => handleGenreToggle(genre)}
+                            className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all ${
+                              selectedGenres.includes(genre)
+                                ? 'bg-primary text-primary-foreground'
+                                : 'bg-white/5 text-muted-foreground hover:bg-white/10 hover:text-foreground'
+                            }`}
+                          >
+                            {genre}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div className="sm:ml-auto">
-                  <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortOption)}>
+                  <Select value={sortBy} onValueChange={handleSortChange}>
                     <SelectTrigger className="w-full sm:w-[180px] glass-subtle border-white/5">
                       <SelectValue placeholder="Sort by" />
                     </SelectTrigger>
                     <SelectContent className="glass border-white/5">
                       <SelectItem value="popularity">Popularity</SelectItem>
-                      <SelectItem value="completion">Completion Date</SelectItem>
+                      <SelectItem value="end_date">Completion Date</SelectItem>
                       <SelectItem value="score">Rating</SelectItem>
                     </SelectContent>
                   </Select>
@@ -515,7 +598,7 @@ export default function Home() {
                 </div>
                 <p className="text-muted-foreground mt-4 text-sm">Loading anime...</p>
               </div>
-            ) : filteredAnime.length === 0 ? (
+            ) : animeList.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-center">
                 <div className="w-16 h-16 rounded-2xl bg-muted/50 flex items-center justify-center mb-4">
                   <X className="w-8 h-8 text-muted-foreground/50" />
@@ -524,11 +607,42 @@ export default function Home() {
                 <p className="text-muted-foreground text-sm">Try adjusting your filters</p>
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4 sm:gap-5">
-                {filteredAnime.map((anime, index) => (
-                  <AnimeCard key={anime.anime_id} anime={anime} index={index} />
-                ))}
-              </div>
+              <>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4 sm:gap-5">
+                  {animeList.map((anime, index) => (
+                    <AnimeCard key={anime.anime_id} anime={anime} index={index} />
+                  ))}
+                </div>
+
+                {/* Pagination */}
+                {totalPages > 1 && (
+                  <div className="flex justify-center items-center gap-3 mt-8 animate-fade-in">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={currentPage === 1}
+                      onClick={() => setCurrentPage(p => p - 1)}
+                      className="glass-subtle border-white/5"
+                    >
+                      <ChevronLeft className="w-4 h-4 mr-1" />
+                      Previous
+                    </Button>
+                    <span className="text-sm text-muted-foreground">
+                      Page {currentPage} of {totalPages}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={currentPage === totalPages}
+                      onClick={() => setCurrentPage(p => p + 1)}
+                      className="glass-subtle border-white/5"
+                    >
+                      Next
+                      <ChevronRight className="w-4 h-4 ml-1" />
+                    </Button>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </main>
