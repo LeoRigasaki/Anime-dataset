@@ -2,7 +2,7 @@ Anime Data Coverage Report
 ========================
 
 Overall Statistics:
-Total anime entries: 21770
+Total anime entries: 21776
 Date range: 1966-07-01 to 2026-07-17
 
 Anime Count by Year:
@@ -49,7 +49,7 @@ Year 2005: 343 anime
 Year 2006: 419 anime
 Year 2007: 405 anime
 Year 2008: 416 anime
-Year 2009: 513 anime
+Year 2009: 514 anime
 Year 2010: 511 anime
 Year 2011: 638 anime
 Year 2012: 713 anime
@@ -62,11 +62,11 @@ Year 2018: 1021 anime
 Year 2019: 982 anime
 Year 2020: 968 anime
 Year 2021: 1094 anime
-Year 2022: 1096 anime
+Year 2022: 1097 anime
 Year 2023: 1087 anime
-Year 2024: 1029 anime
-Year 2025: 933 anime
-Year 2026: 220 anime
+Year 2024: 1030 anime
+Year 2025: 935 anime
+Year 2026: 221 anime
 
 Missing or Zero Count Years:
 -------------------------
@@ -87,6 +87,6 @@ Year 1983: Only 98 anime (possibly incomplete)
 
 Current Data File:
 ----------------
-Filename: anime_seasonal_20260207.csv
-File date: 20260207
-File size: 12648805 bytes
+Filename: anime_seasonal_20260208.csv
+File date: 20260208
+File size: 12651276 bytes
