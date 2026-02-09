@@ -277,13 +277,16 @@ class SupabaseClient:
     # SYNC LOG OPERATIONS
     # =========================================================================
 
-    def start_sync_log(self, sync_type: str) -> int:
+    def start_sync_log(self, sync_type: str, csv_source: str = None) -> int:
         """Start a new sync log entry, returns the log ID"""
-        result = self.client.table('sync_log').insert({
+        entry = {
             'sync_type': sync_type,
             'started_at': datetime.utcnow().isoformat(),
             'status': 'running'
-        }).execute()
+        }
+        if csv_source:
+            entry['csv_source'] = csv_source
+        result = self.client.table('sync_log').insert(entry).execute()
 
         return result.data[0]['id'] if result.data else 0
 
@@ -293,19 +296,38 @@ class SupabaseClient:
         records_processed: int,
         records_inserted: int,
         records_updated: int,
-        error_message: str = None
+        error_message: str = None,
+        new_records: int = 0,
+        updated_records: int = 0,
+        details: dict = None
     ):
-        """Complete a sync log entry"""
+        """Complete a sync log entry with detailed change info"""
         status = 'failed' if error_message else 'completed'
 
-        self.client.table('sync_log').update({
+        update_data = {
             'completed_at': datetime.utcnow().isoformat(),
             'status': status,
             'records_processed': records_processed,
             'records_inserted': records_inserted,
             'records_updated': records_updated,
+            'new_records': new_records,
+            'updated_records': updated_records,
             'error_message': error_message
-        }).eq('id', log_id).execute()
+        }
+        if details:
+            update_data['details'] = details
+
+        self.client.table('sync_log').update(update_data).eq('id', log_id).execute()
+
+    def get_existing_anime_ids(self, anime_ids: List[int]) -> set:
+        """Check which anime_ids already exist in the database"""
+        existing = set()
+        # Query in batches of 500 to avoid URL length limits
+        for i in range(0, len(anime_ids), 500):
+            batch = anime_ids[i:i + 500]
+            result = self.client.table('animes').select('anime_id').in_('anime_id', batch).execute()
+            existing.update(row['anime_id'] for row in (result.data or []))
+        return existing
 
     # =========================================================================
     # UTILITY METHODS

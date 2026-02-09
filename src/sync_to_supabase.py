@@ -64,7 +64,8 @@ def load_csv_as_dicts(csv_path: str) -> List[Dict[str, Any]]:
 def sync_from_data(
     data: List[Dict[str, Any]],
     batch_size: int = 100,
-    dry_run: bool = False
+    dry_run: bool = False,
+    csv_source: str = None
 ) -> Dict[str, Any]:
     """
     Sync a list of anime dicts to Supabase.
@@ -75,6 +76,8 @@ def sync_from_data(
     result = {
         'total_records': len(data),
         'records_synced': 0,
+        'new_records': 0,
+        'updated_records': 0,
         'errors': [],
         'dry_run': dry_run
     }
@@ -91,17 +94,49 @@ def sync_from_data(
             result['errors'].append("Supabase health check failed")
             return result
 
-        log_id = client.start_sync_log('github_actions_sync')
+        # Determine new vs existing records
+        incoming_ids = [d.get('anime_id') for d in data if d.get('anime_id')]
+        existing_ids = client.get_existing_anime_ids(incoming_ids)
+        new_ids = set(incoming_ids) - existing_ids
+        new_count = len(new_ids)
+        updated_count = len(existing_ids & set(incoming_ids))
+
+        print(f"  New anime: {new_count}, Updating: {updated_count}")
+
+        # Build details summary
+        seasons = {}
+        genres_seen = set()
+        for d in data:
+            sy = d.get('season_year', 0)
+            s = d.get('season', '')
+            key = f"{s} {sy}" if s and sy else str(sy)
+            seasons[key] = seasons.get(key, 0) + 1
+            g = d.get('genres', '')
+            if isinstance(g, str) and g:
+                genres_seen.update(g.split(';'))
+
+        details = {
+            'seasons': seasons,
+            'genre_count': len(genres_seen),
+            'new_anime_ids': sorted(list(new_ids))[:50],  # First 50 new IDs
+        }
+
+        log_id = client.start_sync_log('github_actions_sync', csv_source=csv_source)
 
         try:
             synced = client.upsert_anime_batch(data, batch_size)
             result['records_synced'] = synced
+            result['new_records'] = new_count
+            result['updated_records'] = updated_count
 
             client.complete_sync_log(
                 log_id,
                 records_processed=len(data),
                 records_inserted=synced,
-                records_updated=0
+                records_updated=0,
+                new_records=new_count,
+                updated_records=updated_count,
+                details=details
             )
         except Exception as e:
             client.complete_sync_log(
@@ -128,7 +163,8 @@ def sync_from_csv(csv_path: str, batch_size: int = 100, dry_run: bool = False) -
     data = load_csv_as_dicts(csv_path)
     print(f"Loaded {len(data)} records from CSV")
 
-    return sync_from_data(data, batch_size, dry_run)
+    csv_name = os.path.basename(csv_path)
+    return sync_from_data(data, batch_size, dry_run, csv_source=csv_name)
 
 
 def main():
@@ -147,6 +183,8 @@ def main():
         print(f"\nSync Summary:")
         print(f"  Total records: {result['total_records']}")
         print(f"  Records synced: {result['records_synced']}")
+        print(f"  New anime: {result.get('new_records', 0)}")
+        print(f"  Updated anime: {result.get('updated_records', 0)}")
         if result['errors']:
             print(f"  Errors: {len(result['errors'])}")
             for err in result['errors']:
