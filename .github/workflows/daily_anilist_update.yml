@@ -55,6 +55,21 @@ jobs:
             wc -l "$expected_file"
           fi
 
+      - name: Sync to Supabase
+        if: success()
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          expected_file="data/raw/anilist_seasonal_${{ env.CURRENT_DATE }}.csv"
+          if [ -f "$expected_file" ]; then
+            echo "Syncing $expected_file to Supabase..."
+            python -u src/sync_to_supabase.py --csv "$expected_file"
+          else
+            echo "WARNING: Expected CSV file not found, skipping Supabase sync"
+          fi
+
       - name: Commit AniList Changes
         run: |
           git config --local user.email "${{ github.actor }}@users.noreply.github.com"

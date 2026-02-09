@@ -565,32 +565,6 @@ def save_airing_data(data, folder='data/raw'):
 
 def main():
     start_time = time.time()
-    print("Starting combined seasonal anime + AniList data collection...")
-    
-    # Get seasons to fetch (adjust range as needed)
-    all_seasons = get_all_seasons(start_year=2010)  # Start from 2010 for better data quality
-    all_anime_data = []
-    unique_anime_ids = set()
-    
-    print(f"Will collect data for {len(all_seasons)} seasons from AniList...")
-    
-    for i, (year, season) in enumerate(all_seasons):
-        print(f"\n[{i+1}/{len(all_seasons)}] Processing {season} {year}")
-        
-        seasonal_data = fetch_seasonal_anime_anilist(year, season)
-        
-        # Add only unique anime
-        for anime in seasonal_data:
-            anime_id = anime.get('id')
-            if anime_id and anime_id not in unique_anime_ids:
-                all_anime_data.append(anime)
-                unique_anime_ids.add(anime_id)
-        
-        # Rate limiting between seasons
-        time.sleep(2)
-        
-def main():
-    start_time = time.time()
     print("Starting AniList seasonal anime data collection...")
     print(f"Using AniList GraphQL API: {ANILIST_GRAPHQL_URL}")
     

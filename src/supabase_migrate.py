@@ -321,6 +321,12 @@ Examples:
   # Sync a specific year
   python supabase_migrate.py --year 2023
 
+  # Sync from a CSV file (no API calls)
+  python supabase_migrate.py --from-csv data/raw/anilist_seasonal_20251228.csv
+
+  # Sync all CSVs from a directory
+  python supabase_migrate.py --from-csv-dir data/raw/
+
   # Print database statistics
   python supabase_migrate.py --stats
         """
@@ -363,11 +369,39 @@ Examples:
         action='store_true',
         help='Print database statistics'
     )
+    parser.add_argument(
+        '--from-csv',
+        type=str,
+        help='Sync from a CSV file instead of fetching from API'
+    )
+    parser.add_argument(
+        '--from-csv-dir',
+        type=str,
+        help='Sync all matching CSVs from a directory'
+    )
 
     args = parser.parse_args()
 
     if args.stats:
         print_stats()
+    elif args.from_csv:
+        from src.sync_to_supabase import sync_from_csv
+        result = sync_from_csv(args.from_csv, args.batch_size)
+        print(f"\nSync complete: {result['records_synced']}/{result['total_records']} records")
+        if result['errors']:
+            print(f"Errors: {result['errors']}")
+            sys.exit(1)
+    elif args.from_csv_dir:
+        from src.sync_to_supabase import sync_from_csv
+        import glob as g
+        pattern = os.path.join(args.from_csv_dir, 'anilist_seasonal_*.csv')
+        files = sorted(g.glob(pattern))
+        if not files:
+            print(f"No files matching {pattern}")
+            sys.exit(1)
+        for f in files:
+            print(f"\n--- {os.path.basename(f)} ---")
+            sync_from_csv(f, args.batch_size)
     elif args.full:
         migrate_historical_data(
             start_year=args.start_year,
