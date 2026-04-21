@@ -87,6 +87,6 @@ Year 1983: Only 98 anime (possibly incomplete)
 
 Current Data File:
 ----------------
-Filename: anime_seasonal_20260420.csv
-File date: 20260420
-File size: 12811024 bytes
+Filename: anime_seasonal_20260421.csv
+File date: 20260421
+File size: 12811083 bytes
