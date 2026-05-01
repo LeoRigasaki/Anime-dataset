@@ -52,7 +52,7 @@ Year 2008: 417 anime
 Year 2009: 514 anime
 Year 2010: 513 anime
 Year 2011: 640 anime
-Year 2012: 715 anime
+Year 2012: 714 anime
 Year 2013: 744 anime
 Year 2014: 870 anime
 Year 2015: 867 anime
@@ -64,9 +64,9 @@ Year 2020: 971 anime
 Year 2021: 1103 anime
 Year 2022: 1098 anime
 Year 2023: 1099 anime
-Year 2024: 1046 anime
+Year 2024: 1048 anime
 Year 2025: 967 anime
-Year 2026: 407 anime
+Year 2026: 406 anime
 
 Missing or Zero Count Years:
 -------------------------
@@ -87,6 +87,6 @@ Year 1983: Only 99 anime (possibly incomplete)
 
 Current Data File:
 ----------------
-Filename: anime_seasonal_20260430.csv
-File date: 20260430
-File size: 12827241 bytes
+Filename: anime_seasonal_20260501.csv
+File date: 20260501
+File size: 12828738 bytes
