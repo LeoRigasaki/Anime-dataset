@@ -1,0 +1,66 @@
+name: Daily Supabase Sync
+
+on:
+  workflow_run:
+    workflows:
+      - Daily AniList Data Update
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: daily-supabase-sync
+  cancel-in-progress: false
+
+jobs:
+  sync-supabase:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Locate latest AniList snapshot
+        run: |
+          latest_file=$(ls -1 data/raw/anilist_seasonal_*.csv 2>/dev/null | sort | tail -n 1)
+          if [ -z "$latest_file" ]; then
+            echo "No AniList seasonal CSV snapshot found in data/raw/"
+            exit 1
+          fi
+
+          echo "LATEST_ANILIST_CSV=$latest_file" >> "$GITHUB_ENV"
+          echo "Using snapshot: $latest_file"
+          wc -l "$latest_file"
+
+      - name: Sync latest snapshot to Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          python -u src/sync_to_supabase.py --csv "$LATEST_ANILIST_CSV"
+
+      - name: Create Issue on Failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Supabase Sync Failed',
+              body: `The Supabase sync workflow failed on ${new Date().toISOString()}\n\nPlease check the [workflow logs](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for more details.`
+            })

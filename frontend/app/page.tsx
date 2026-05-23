@@ -410,7 +410,7 @@ export default function Home() {
                   <span className="text-foreground">Schedule</span>
                 </h1>
                 <p className="text-[10px] sm:text-xs text-muted-foreground font-medium tracking-wide hidden sm:block">
-                  AI-Powered Tracker
+                  Seasonal Tracker
                 </p>
               </div>
             </div>
@@ -431,13 +431,6 @@ export default function Home() {
                 >
                   <Calendar className="w-4 h-4" />
                   <span className="hidden sm:inline">Schedule</span>
-                </button>
-                <button
-                  onClick={() => setTab('chat')}
-                  className={`nav-pill flex items-center gap-1.5 ${tab === 'chat' ? 'nav-pill-active' : 'nav-pill-inactive'}`}
-                >
-                  <MessageSquare className="w-4 h-4" />
-                  <span className="hidden sm:inline">Chat</span>
                 </button>
               </div>
 
@@ -475,7 +468,7 @@ export default function Home() {
             <div className="mb-8 space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
                 <div className="animate-fade-in">
-                  <p className="text-xs font-medium text-primary mb-1 tracking-widest uppercase">Current Season</p>
+                  <p className="text-xs font-medium text-primary mb-1 tracking-widest uppercase">Active Window</p>
                   <h2 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">
                     {seasonInfo || 'Loading...'}
                   </h2>

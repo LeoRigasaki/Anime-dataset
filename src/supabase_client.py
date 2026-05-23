@@ -1,7 +1,4 @@
-"""
-Supabase client wrapper for AnimeScheduleAgent
-Handles all database operations for anime data
-"""
+"""Supabase client wrapper for anime catalog and schedule data."""
 
 import os
 from datetime import datetime, timezone
@@ -11,9 +8,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+DEFAULT_WINDOW_START_YEAR = 2026
+DEFAULT_WINDOW_END_YEAR = 2029
+
 
 class SupabaseClient:
-    """Wrapper for Supabase operations on anime data"""
+    """Wrapper for Supabase operations on anime data."""
 
     def __init__(self):
         url = os.getenv("SUPABASE_URL")
@@ -27,12 +27,144 @@ class SupabaseClient:
 
         self.client: Client = create_client(url, key)
         self.current_year = datetime.now().year
+        self._dataset_versioning_supported: Optional[bool] = None
+
+    def _is_missing_relation_error(self, error: Exception, relation_name: str) -> bool:
+        """Check whether a Supabase error means a table/view is missing."""
+        message = str(error)
+        return relation_name in message and (
+            "Could not find the table" in message
+            or "schema cache" in message
+            or "does not exist" in message
+        )
+
+    def supports_dataset_versioning(self) -> bool:
+        """Check whether the remote database has the versioning migration."""
+        if self._dataset_versioning_supported is not None:
+            return self._dataset_versioning_supported
+
+        try:
+            self.client.table('dataset_versions').select('id').limit(1).execute()
+            self._dataset_versioning_supported = True
+        except Exception as e:
+            if self._is_missing_relation_error(e, 'dataset_versions'):
+                self._dataset_versioning_supported = False
+            else:
+                raise
+
+        return self._dataset_versioning_supported
+
+    def get_active_dataset_version(self) -> Optional[Dict[str, Any]]:
+        """Return the currently active dataset version, if versioning is enabled."""
+        if not self.supports_dataset_versioning():
+            return None
+
+        result = self.client.table('dataset_versions').select('*').eq('status', 'active').execute()
+        versions = result.data or []
+        if not versions:
+            return None
+
+        return max(
+            versions,
+            key=lambda row: (
+                row.get('activated_at') or '',
+                row.get('completed_at') or '',
+                row.get('started_at') or '',
+                row.get('id') or 0,
+            )
+        )
+
+    def _resolve_dataset_version_id(self, version_id: Optional[int] = None) -> Optional[int]:
+        """Resolve a dataset version id for reads/writes."""
+        if version_id is not None:
+            return version_id
+
+        active_version = self.get_active_dataset_version()
+        if active_version:
+            return active_version.get('id')
+        return None
+
+    def start_dataset_version(
+        self,
+        version_name: str,
+        csv_source: Optional[str] = None,
+        window_start_year: int = DEFAULT_WINDOW_START_YEAR,
+        window_end_year: int = DEFAULT_WINDOW_END_YEAR,
+        expected_records: int = 0,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Create a new loading dataset version."""
+        if not self.supports_dataset_versioning():
+            return None
+
+        payload = {
+            'version_name': version_name,
+            'source_file': csv_source,
+            'status': 'loading',
+            'window_start_year': window_start_year,
+            'window_end_year': window_end_year,
+            'records_expected': expected_records,
+            'records_loaded': 0,
+            'started_at': datetime.utcnow().isoformat(),
+            'details': details or {},
+        }
+
+        try:
+            result = self.client.table('dataset_versions').insert(payload).execute()
+            return result.data[0] if result.data else None
+        except Exception:
+            existing = self.client.table('dataset_versions').select('*').eq('version_name', version_name).limit(1).execute()
+            return existing.data[0] if existing.data else None
+
+    def activate_dataset_version(
+        self,
+        version_id: int,
+        records_loaded: int = 0,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Mark a finished dataset version as active and archive older ones."""
+        if not self.supports_dataset_versioning():
+            return
+
+        now = datetime.utcnow().isoformat()
+        self.client.table('dataset_versions').update({
+            'status': 'active',
+            'records_loaded': records_loaded,
+            'completed_at': now,
+            'activated_at': now,
+            'details': details or {},
+        }).eq('id', version_id).execute()
+
+        self.client.table('dataset_versions').update({
+            'status': 'archived',
+        }).eq('status', 'active').neq('id', version_id).execute()
+
+    def fail_dataset_version(self, version_id: int, error_message: str) -> None:
+        """Mark a loading dataset version as failed."""
+        if not self.supports_dataset_versioning():
+            return
+
+        self.client.table('dataset_versions').update({
+            'status': 'failed',
+            'completed_at': datetime.utcnow().isoformat(),
+            'error_message': error_message,
+        }).eq('id', version_id).execute()
+
+    def _apply_dataset_version_filter(self, query, version_id: Optional[int] = None):
+        """Apply active dataset version filtering when the schema supports it."""
+        if not self.supports_dataset_versioning():
+            return query
+
+        resolved_version_id = self._resolve_dataset_version_id(version_id)
+        if resolved_version_id is None:
+            return query.eq('dataset_version_id', -1)
+        return query.eq('dataset_version_id', resolved_version_id)
 
     # =========================================================================
     # ANIME OPERATIONS
     # =========================================================================
 
-    def upsert_anime(self, anime_data: Dict[str, Any]) -> Optional[Dict]:
+    def upsert_anime(self, anime_data: Dict[str, Any], version_id: Optional[int] = None) -> Optional[Dict]:
         """
         Insert or update a single anime record.
         Uses anime_id as the unique key for upserts.
@@ -40,10 +172,13 @@ class SupabaseClient:
         try:
             # Convert semicolon-separated strings to arrays for Supabase
             anime_data = self._convert_to_arrays(anime_data)
+            resolved_version_id = self._resolve_dataset_version_id(version_id)
+            if self.supports_dataset_versioning() and resolved_version_id is not None:
+                anime_data['dataset_version_id'] = resolved_version_id
 
             result = self.client.table('animes').upsert(
                 anime_data,
-                on_conflict='anime_id'
+                on_conflict='dataset_version_id,anime_id' if self.supports_dataset_versioning() else 'anime_id'
             ).execute()
 
             return result.data[0] if result.data else None
@@ -51,24 +186,36 @@ class SupabaseClient:
             print(f"Error upserting anime {anime_data.get('anime_id')}: {e}")
             return None
 
-    def upsert_anime_batch(self, anime_list: List[Dict[str, Any]], batch_size: int = 100) -> int:
+    def upsert_anime_batch(
+        self,
+        anime_list: List[Dict[str, Any]],
+        batch_size: int = 100,
+        version_id: Optional[int] = None
+    ) -> int:
         """
         Batch upsert multiple anime records.
         Returns count of successfully upserted records.
         """
         total_upserted = 0
 
+        resolved_version_id = self._resolve_dataset_version_id(version_id)
+
         # Process in batches
         for i in range(0, len(anime_list), batch_size):
             batch = anime_list[i:i + batch_size]
 
             # Convert each record
-            converted_batch = [self._convert_to_arrays(anime) for anime in batch]
+            converted_batch = []
+            for anime in batch:
+                converted = self._convert_to_arrays(anime)
+                if self.supports_dataset_versioning() and resolved_version_id is not None:
+                    converted['dataset_version_id'] = resolved_version_id
+                converted_batch.append(converted)
 
             try:
                 result = self.client.table('animes').upsert(
                     converted_batch,
-                    on_conflict='anime_id'
+                    on_conflict='dataset_version_id,anime_id' if self.supports_dataset_versioning() else 'anime_id'
                 ).execute()
 
                 total_upserted += len(result.data) if result.data else 0
@@ -88,7 +235,9 @@ class SupabaseClient:
 
     def get_anime_by_id(self, anime_id: int) -> Optional[Dict]:
         """Get a single anime by AniList ID"""
-        result = self.client.table('animes').select('*').eq('anime_id', anime_id).execute()
+        query = self.client.table('animes').select('*').eq('anime_id', anime_id)
+        query = self._apply_dataset_version_filter(query)
+        result = query.execute()
         return result.data[0] if result.data else None
 
     def get_seasonal_anime(
@@ -96,12 +245,13 @@ class SupabaseClient:
         year: int,
         season: str,
         limit: int = 50,
-        offset: int = 0
+        offset: int = 0,
+        version_id: Optional[int] = None
     ) -> List[Dict]:
         """Get anime for a specific season"""
-        result = self.client.table('animes')\
-            .select('*')\
-            .eq('season_year', year)\
+        query = self.client.table('animes').select('*')
+        query = self._apply_dataset_version_filter(query, version_id)
+        result = query.eq('season_year', year)\
             .eq('season', season)\
             .order('popularity', desc=True)\
             .range(offset, offset + limit - 1)\
@@ -125,9 +275,9 @@ class SupabaseClient:
 
     def get_airing_anime(self, limit: int = 100) -> List[Dict]:
         """Get currently airing anime"""
-        result = self.client.table('animes')\
-            .select('*')\
-            .eq('status', 'RELEASING')\
+        query = self.client.table('animes').select('*')
+        query = self._apply_dataset_version_filter(query)
+        result = query.eq('status', 'RELEASING')\
             .order('popularity', desc=True)\
             .limit(limit)\
             .execute()
@@ -136,9 +286,9 @@ class SupabaseClient:
 
     def search_anime(self, query: str, limit: int = 20) -> List[Dict]:
         """Search anime by title"""
-        result = self.client.table('animes')\
-            .select('*')\
-            .or_(f"title.ilike.%{query}%,english_title.ilike.%{query}%")\
+        request = self.client.table('animes').select('*')
+        request = self._apply_dataset_version_filter(request)
+        result = request.or_(f"title.ilike.%{query}%,english_title.ilike.%{query}%")\
             .order('popularity', desc=True)\
             .limit(limit)\
             .execute()
@@ -147,9 +297,9 @@ class SupabaseClient:
 
     def get_anime_by_year(self, year: int, limit: int = 500) -> List[Dict]:
         """Get all anime from a specific year"""
-        result = self.client.table('animes')\
-            .select('*')\
-            .eq('season_year', year)\
+        query = self.client.table('animes').select('*')
+        query = self._apply_dataset_version_filter(query)
+        result = query.eq('season_year', year)\
             .order('popularity', desc=True)\
             .limit(limit)\
             .execute()
@@ -158,19 +308,17 @@ class SupabaseClient:
 
     def get_anime_count_by_year(self, year: int) -> int:
         """Get count of anime for a specific year"""
-        result = self.client.table('animes')\
-            .select('anime_id', count='exact')\
-            .eq('season_year', year)\
-            .execute()
+        query = self.client.table('animes').select('anime_id', count='exact')
+        query = self._apply_dataset_version_filter(query)
+        result = query.eq('season_year', year).execute()
 
         return result.count or 0
 
     def delete_current_year_anime(self) -> int:
         """Delete all anime from current year (for re-sync)"""
-        result = self.client.table('animes')\
-            .delete()\
-            .eq('season_year', self.current_year)\
-            .execute()
+        query = self.client.table('animes').delete()
+        query = self._apply_dataset_version_filter(query)
+        result = query.eq('season_year', self.current_year).execute()
 
         return len(result.data) if result.data else 0
 
@@ -181,9 +329,15 @@ class SupabaseClient:
     def upsert_schedule(self, schedule_data: Dict[str, Any]) -> Optional[Dict]:
         """Upsert a single schedule entry"""
         try:
+            resolved_version_id = self._resolve_dataset_version_id()
+            if self.supports_dataset_versioning() and resolved_version_id is not None:
+                schedule_data = {
+                    **schedule_data,
+                    'dataset_version_id': resolved_version_id
+                }
             result = self.client.table('airing_schedule').upsert(
                 schedule_data,
-                on_conflict='anime_id,episode'
+                on_conflict='dataset_version_id,anime_id,episode' if self.supports_dataset_versioning() else 'anime_id,episode'
             ).execute()
 
             return result.data[0] if result.data else None
@@ -196,9 +350,9 @@ class SupabaseClient:
         start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0)
         end_of_day = date.replace(hour=23, minute=59, second=59, microsecond=999999)
 
-        result = self.client.table('airing_schedule')\
-            .select('*, animes(*)')\
-            .gte('airing_at', start_of_day.isoformat())\
+        query = self.client.table('airing_schedule').select('*, animes(*)')
+        query = self._apply_dataset_version_filter(query)
+        result = query.gte('airing_at', start_of_day.isoformat())\
             .lte('airing_at', end_of_day.isoformat())\
             .order('airing_at')\
             .execute()
@@ -210,9 +364,9 @@ class SupabaseClient:
         from datetime import timedelta
         end_date = start_date + timedelta(days=7)
 
-        result = self.client.table('airing_schedule')\
-            .select('*, animes(*)')\
-            .gte('airing_at', start_date.isoformat())\
+        query = self.client.table('airing_schedule').select('*, animes(*)')
+        query = self._apply_dataset_version_filter(query)
+        result = query.gte('airing_at', start_date.isoformat())\
             .lt('airing_at', end_date.isoformat())\
             .order('airing_at')\
             .execute()
@@ -221,10 +375,9 @@ class SupabaseClient:
 
     def clear_old_schedule(self, before_date: datetime) -> int:
         """Clear schedule entries older than the given date"""
-        result = self.client.table('airing_schedule')\
-            .delete()\
-            .lt('airing_at', before_date.isoformat())\
-            .execute()
+        query = self.client.table('airing_schedule').delete()
+        query = self._apply_dataset_version_filter(query)
+        result = query.lt('airing_at', before_date.isoformat()).execute()
 
         return len(result.data) if result.data else 0
 
@@ -232,10 +385,10 @@ class SupabaseClient:
     # SEASON ARCHIVE OPERATIONS
     # =========================================================================
 
-    def archive_season(self, year: int, season: str) -> Optional[Dict]:
+    def archive_season(self, year: int, season: str, version_id: Optional[int] = None) -> Optional[Dict]:
         """Create or update a season archive entry"""
         # Get all anime for this season
-        anime_list = self.get_seasonal_anime(year, season, limit=1000)
+        anime_list = self.get_seasonal_anime(year, season, limit=1000, version_id=version_id)
 
         if not anime_list:
             return None
@@ -255,19 +408,22 @@ class SupabaseClient:
             'total_members': total_members,
             'avg_score': avg_score
         }
+        resolved_version_id = self._resolve_dataset_version_id(version_id)
+        if self.supports_dataset_versioning() and resolved_version_id is not None:
+            archive_data['dataset_version_id'] = resolved_version_id
 
         result = self.client.table('season_archive').upsert(
             archive_data,
-            on_conflict='season,year'
+            on_conflict='dataset_version_id,season,year' if self.supports_dataset_versioning() else 'season,year'
         ).execute()
 
         return result.data[0] if result.data else None
 
     def get_season_archive(self, year: int, season: str) -> Optional[Dict]:
         """Get archived season data"""
-        result = self.client.table('season_archive')\
-            .select('*')\
-            .eq('year', year)\
+        query = self.client.table('season_archive').select('*')
+        query = self._apply_dataset_version_filter(query)
+        result = query.eq('year', year)\
             .eq('season', season)\
             .execute()
 
@@ -319,13 +475,17 @@ class SupabaseClient:
 
         self.client.table('sync_log').update(update_data).eq('id', log_id).execute()
 
-    def get_existing_anime_ids(self, anime_ids: List[int]) -> set:
-        """Check which anime_ids already exist in the database"""
+    def get_existing_anime_ids(self, anime_ids: List[int], version_id: Optional[int] = None) -> set:
+        """Check which anime_ids already exist in the active or specified dataset."""
         existing = set()
+        resolved_version_id = self._resolve_dataset_version_id(version_id)
         # Query in batches of 500 to avoid URL length limits
         for i in range(0, len(anime_ids), 500):
             batch = anime_ids[i:i + 500]
-            result = self.client.table('animes').select('anime_id').in_('anime_id', batch).execute()
+            query = self.client.table('animes').select('anime_id').in_('anime_id', batch)
+            if self.supports_dataset_versioning() and resolved_version_id is not None:
+                query = query.eq('dataset_version_id', resolved_version_id)
+            result = query.execute()
             existing.update(row['anime_id'] for row in (result.data or []))
         return existing
 

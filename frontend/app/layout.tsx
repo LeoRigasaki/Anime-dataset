@@ -2,8 +2,8 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'AnimeSchedule - AI-Powered Anime Tracker',
-  description: 'Track anime schedules, get AI-powered recommendations, and discover new shows with our premium anime tracker.',
+  title: 'AnimeSchedule - Seasonal Anime Tracker',
+  description: 'Track anime schedules and browse the latest seasonal catalog from the active dataset window.',
   keywords: ['anime', 'schedule', 'tracker', 'anilist', 'episodes', 'recommendations'],
 }
 

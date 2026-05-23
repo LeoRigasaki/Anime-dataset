@@ -1,32 +1,28 @@
-"""FastAPI backend for AnimeScheduleAgent."""
+"""FastAPI backend for anime catalog and schedule data."""
 import os
 import sys
-import re
 import time
 from contextlib import asynccontextmanager
+from datetime import date
 from typing import Optional
-from datetime import date, timedelta
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 # Simple in-memory cache for API responses
 _api_cache: dict[str, tuple[float, dict]] = {}
-_API_CACHE_TTL = 120  # 2 minutes cache for API responses
+_API_CACHE_TTL = 120
 
 # Add parent to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 load_dotenv()
 
-from src.agent import AnimeScheduleAgent
-from src.tools import get_season_anime, search_anime, get_weekly_schedule
-
-# Global agent instance
-agent: Optional[AnimeScheduleAgent] = None
+from src.supabase_client import get_supabase_client
+from src.supabase_tools import get_season_anime, get_weekly_schedule, search_anime
 
 
 def _get_current_season() -> tuple[str, int]:
@@ -36,108 +32,40 @@ def _get_current_season() -> tuple[str, int]:
     year = today.year
     if month in (1, 2, 3):
         return "WINTER", year
-    elif month in (4, 5, 6):
+    if month in (4, 5, 6):
         return "SPRING", year
-    elif month in (7, 8, 9):
+    if month in (7, 8, 9):
         return "SUMMER", year
-    else:
-        return "FALL", year
+    return "FALL", year
 
 
-def _extract_anime_names_from_text(text: str) -> list[str]:
-    """
-    Extract potential anime titles from response text.
-    Looks for capitalized phrases that could be anime names.
-    """
-    # Pattern to find quoted text or capitalized multi-word phrases
-    patterns = [
-        r'"([^"]+)"',  # Quoted text
-        r"'([^']+)'",  # Single quoted text
-        r'\b([A-Z][A-Za-z0-9\s:!?\-]+(?:Season|Arc|Part|Movie|OVA|Special|TV|Film)\s*\d*)\b',  # Titles with keywords
-        r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b',  # Capitalized multi-word phrases
-    ]
-
-    potential_names = set()
-    for pattern in patterns:
-        matches = re.findall(pattern, text)
-        for match in matches:
-            # Clean up the match
-            name = match.strip()
-            # Filter out common false positives and short names
-            if len(name) > 3 and not name.lower().startswith(('http', 'www', 'the ')):
-                # Exclude common words that aren't anime
-                exclude_words = {'Winter', 'Spring', 'Summer', 'Fall', 'January', 'February', 'March',
-                                'April', 'May', 'June', 'July', 'August', 'September', 'October',
-                                'November', 'December', 'Today', 'Tomorrow', 'Next Week', 'This Week'}
-                if name not in exclude_words:
-                    potential_names.add(name)
-
-    return list(potential_names)
-
-
-def _search_and_enrich_anime(response_text: str, existing_anime: list[dict]) -> list[dict]:
-    """
-    Search for anime mentioned in response text and add them if not already present.
-    """
-    existing_ids = {anime.get('anime_id') for anime in existing_anime}
-    potential_names = _extract_anime_names_from_text(response_text)
-    enriched_anime = existing_anime.copy()
-
-    for name in potential_names:
-        try:
-            # Search for this anime
-            result = search_anime(name)
-
-            # If we got a result and it's not already in our list
-            if isinstance(result, dict) and result.get('anime_id'):
-                if result['anime_id'] not in existing_ids:
-                    # Add it to our enriched list
-                    anime_entry = {
-                        'anime_id': result['anime_id'],
-                        'title': result.get('title', name),
-                        'cover_image': result.get('cover_image'),
-                        'status': result.get('status'),
-                        'predicted_completion': result.get('predicted_completion'),
-                        'score': result.get('score'),
-                        'episodes': result.get('episodes'),
-                        'current_episode': result.get('current_episode'),
-                        'genres': result.get('genres'),
-                        'synopsis': result.get('synopsis'),
-                        'is_adult': result.get('is_adult'),
-                    }
-                    # Remove None values
-                    anime_entry = {k: v for k, v in anime_entry.items() if v is not None}
-                    enriched_anime.append(anime_entry)
-                    existing_ids.add(result['anime_id'])
-        except Exception as e:
-            # If search fails for this name, just continue with others
-            print(f"Warning: Failed to search for '{name}': {e}")
-            continue
-
-    return enriched_anime
+def _get_db_ready() -> bool:
+    """Check whether Supabase is configured and reachable."""
+    try:
+        client = get_supabase_client()
+        return client.health_check()
+    except Exception as exc:
+        print(f"Database health check failed: {exc}")
+        return False
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize agent on startup."""
-    global agent
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        print("⚠️  WARNING: GOOGLE_API_KEY not set. Agent queries will fail.")
+    """Report database availability on startup."""
+    if _get_db_ready():
+        print("Supabase catalog backend ready")
     else:
-        agent = AnimeScheduleAgent(api_key=api_key)
-        print("✅ AnimeScheduleAgent initialized")
+        print("Supabase unavailable, catalog routes may fall back to CSV/API data")
     yield
 
 
 app = FastAPI(
-    title="AnimeScheduleAgent API",
-    description="AI-powered anime completion predictions",
-    version="1.0.0",
+    title="Anime Schedule API",
+    description="Anime catalog, schedule, and Supabase-backed dataset sync endpoints",
+    version="2.0.0",
     lifespan=lifespan
 )
 
-# Allow Next.js frontend to connect
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -146,7 +74,7 @@ app.add_middleware(
         "https://frontend-ivory-omega-89.vercel.app",
         "https://frontend-riorigasaki65-gmailcoms-projects.vercel.app",
     ],
-    allow_origin_regex=r"https://.*\.vercel\.app",  # Allow all Vercel preview URLs
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -170,6 +98,7 @@ class AnimeData(BaseModel):
     synopsis: Optional[str] = None
     is_adult: Optional[bool] = None
 
+
 class QueryResponse(BaseModel):
     response: str
     success: bool
@@ -178,44 +107,37 @@ class QueryResponse(BaseModel):
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "agent_ready": agent is not None}
+    db_ready = _get_db_ready()
+    return {
+        "status": "ok" if db_ready else "degraded",
+        "db_ready": db_ready,
+        # Kept for compatibility with the existing frontend health check.
+        "agent_ready": db_ready,
+        "query_enabled": False,
+    }
 
 
 @app.post("/query", response_model=QueryResponse)
 async def query_agent(request: QueryRequest):
-    """Send a natural language query to the agent."""
-    if not agent:
-        raise HTTPException(status_code=503, detail="Agent not initialized. Check GOOGLE_API_KEY.")
-
+    """Compatibility endpoint after removing the AI agent."""
     if not request.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
-    try:
-        response, anime_data = agent.query_with_data(request.query)
-
-        # Enrich anime data by searching for anime names mentioned in the response
-        enriched_anime = _search_and_enrich_anime(response, anime_data)
-
-        return QueryResponse(response=response, success=True, anime=enriched_anime)
-    except AttributeError:
-        # Fallback if agent doesn't have new method
-        response = agent.query(request.query)
-        # Still try to extract anime names from response
-        enriched_anime = _search_and_enrich_anime(response, [])
-        return QueryResponse(response=response, success=True, anime=enriched_anime)
-    except Exception as e:
-        return QueryResponse(response=f"Error: {str(e)}", success=False)
+    return QueryResponse(
+        response="AI chat has been removed from this build. Use Browse or Schedule instead.",
+        success=False,
+        anime=[],
+    )
 
 
 @app.get("/anime/seasonal")
 async def get_seasonal(season: Optional[str] = None, year: Optional[int] = None):
-    """Get all anime from a season with predictions. Cached for 2 minutes."""
+    """Get all anime from a season. Cached for 2 minutes."""
     if not season or not year:
         season, year = _get_current_season()
 
     cache_key = f"seasonal_{season}_{year}"
 
-    # Check cache first
     if cache_key in _api_cache:
         cached_time, cached_data = _api_cache[cache_key]
         if time.time() - cached_time < _API_CACHE_TTL:
@@ -232,25 +154,15 @@ async def get_seasonal(season: Optional[str] = None, year: Optional[int] = None)
             content=result,
             headers={"X-Cache": "MISS", "Cache-Control": "max-age=120"}
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/anime/schedule/weekly")
 async def get_weekly(weeks_offset: int = 0):
-    """
-    Get all anime episodes airing in a specific week, grouped by day (AniChart-style).
-    Results are cached for 2 minutes to reduce API load.
-
-    Args:
-        weeks_offset: Number of weeks to offset (0 = current week, 1 = next week, -1 = last week)
-
-    Returns:
-        Weekly schedule grouped by day with airing times
-    """
+    """Get weekly airing schedule grouped by day."""
     cache_key = f"weekly_{weeks_offset}"
 
-    # Check cache first
     if cache_key in _api_cache:
         cached_time, cached_data = _api_cache[cache_key]
         if time.time() - cached_time < _API_CACHE_TTL:
@@ -261,15 +173,13 @@ async def get_weekly(weeks_offset: int = 0):
 
     try:
         schedule_data = get_weekly_schedule(weeks_offset)
-        # Cache the result
         _api_cache[cache_key] = (time.time(), schedule_data)
         return JSONResponse(
             content=schedule_data,
             headers={"X-Cache": "MISS", "Cache-Control": "max-age=120"}
         )
-    except Exception as e:
-        # Return empty schedule on error instead of 500
-        print(f"Error fetching weekly schedule: {e}")
+    except Exception as exc:
+        print(f"Error fetching weekly schedule: {exc}")
         return JSONResponse(
             content={
                 "week_start": "",
@@ -278,9 +188,9 @@ async def get_weekly(weeks_offset: int = 0):
                 "total_schedules": 0,
                 "schedule": {},
                 "days_with_anime": [],
-                "error": str(e)
+                "error": str(exc)
             },
-            status_code=200,  # Return 200 with error info instead of 500
+            status_code=200,
             headers={"X-Cache": "ERROR"}
         )
 
@@ -289,22 +199,21 @@ async def get_weekly(weeks_offset: int = 0):
 async def search_anime_endpoint(query: str):
     """Search for a specific anime."""
     try:
-        result = search_anime(query)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return search_anime(query)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/")
 async def root():
     return {
-        "name": "AnimeScheduleAgent API",
+        "name": "Anime Schedule API",
         "endpoints": {
-            "POST /query": "Natural language query to agent",
-            "GET /anime/seasonal": "Get seasonal anime with predictions",
-            "GET /anime/schedule/weekly": "Get weekly airing schedule (AniChart-style)",
-            "GET /anime/search/{query}": "Search specific anime",
-            "GET /health": "Health check"
+            "POST /query": "Compatibility endpoint after removing AI chat",
+            "GET /anime/seasonal": "Get seasonal anime",
+            "GET /anime/schedule/weekly": "Get weekly airing schedule",
+            "GET /anime/search/{query}": "Search for anime",
+            "GET /health": "Health check",
         }
     }
 

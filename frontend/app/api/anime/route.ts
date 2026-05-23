@@ -1,68 +1,125 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 
-function getCurrentSeason(): string {
-  const month = new Date().getMonth() + 1
-  if (month <= 3) return 'WINTER'
-  if (month <= 6) return 'SPRING'
-  if (month <= 9) return 'SUMMER'
-  return 'FALL'
+const FEATURED_START_YEAR = 2026
+const FEATURED_END_YEAR = 2029
+const TABLE_CANDIDATES = ['animes_active', 'animes'] as const
+
+type AnimeRow = {
+  anime_id: number
+  title: string
+  english_title: string | null
+  type: string | null
+  episodes: number | null
+  status: string | null
+  season: string | null
+  season_year: number | null
+  genres: string[] | null
+  score: number | null
+  popularity: number | null
+  cover_image_large: string | null
+  is_adult: boolean | null
+  next_airing_episode_at: number | null
+  next_episode_number: number | null
+  start_date: string | null
+  end_date: string | null
 }
 
-function getCurrentYear(): number {
-  return new Date().getFullYear()
+function parseOptionalInt(value: string | null): number | null {
+  if (!value) return null
+  const parsed = Number.parseInt(value, 10)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+function buildWindowLabel(year: number | null, season: string | null): string {
+  if (year !== null && season) return `${season} ${year}`
+  if (year !== null) {
+    const archiveLabel =
+      year < FEATURED_START_YEAR || year > FEATURED_END_YEAR ? 'Archive' : 'Year'
+    return `${archiveLabel} ${year}`
+  }
+  return `Updated Anime ${FEATURED_START_YEAR}-${FEATURED_END_YEAR}`
 }
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
 
-  const season = searchParams.get('season') || getCurrentSeason()
-  const year = parseInt(searchParams.get('year') || String(getCurrentYear()))
+  const season = searchParams.get('season')
+  const year = parseOptionalInt(searchParams.get('year'))
   const status = searchParams.get('status')
   const genres = searchParams.get('genres')
   const sort = searchParams.get('sort') || 'popularity'
-  const page = parseInt(searchParams.get('page') || '1')
-  const limit = Math.min(parseInt(searchParams.get('limit') || '30'), 50)
+  const page = Math.max(parseOptionalInt(searchParams.get('page')) || 1, 1)
+  const limit = Math.min(parseOptionalInt(searchParams.get('limit')) || 30, 50)
   const offset = (page - 1) * limit
 
-  let query = supabase
-    .from('animes')
-    .select(
-      'anime_id, title, english_title, type, episodes, status, season, season_year, genres, score, popularity, cover_image_large, is_adult, next_airing_episode_at, next_episode_number, start_date, end_date',
-      { count: 'exact' }
-    )
-    .eq('season_year', year)
-    .eq('season', season)
+  let data: AnimeRow[] | null = null
+  let count = 0
+  let lastError: { message: string } | null = null
 
-  if (status && status !== 'all') {
-    query = query.eq('status', status)
-  }
+  for (const tableName of TABLE_CANDIDATES) {
+    let query = supabase
+      .from(tableName)
+      .select(
+        'anime_id, title, english_title, type, episodes, status, season, season_year, genres, score, popularity, cover_image_large, is_adult, next_airing_episode_at, next_episode_number, start_date, end_date',
+        { count: 'exact' }
+      )
 
-  if (genres) {
-    const genreArray = genres.split(',').map(g => g.trim())
-    query = query.contains('genres', genreArray)
-  }
+    if (year !== null) {
+      query = query.eq('season_year', year)
+    } else {
+      query = query
+        .gte('season_year', FEATURED_START_YEAR)
+        .lte('season_year', FEATURED_END_YEAR)
+    }
 
-  switch (sort) {
-    case 'score':
-      query = query.order('score', { ascending: false, nullsFirst: false })
+    if (season) {
+      query = query.eq('season', season)
+    }
+
+    if (status && status !== 'all') {
+      query = query.eq('status', status)
+    }
+
+    if (genres) {
+      const genreArray = genres.split(',').map((genre) => genre.trim()).filter(Boolean)
+      if (genreArray.length > 0) {
+        query = query.contains('genres', genreArray)
+      }
+    }
+
+    switch (sort) {
+      case 'score':
+        query = query.order('score', { ascending: false, nullsFirst: false })
+        break
+      case 'end_date':
+        query = query.order('end_date', { ascending: true, nullsFirst: false })
+        break
+      default:
+        query = query.order('popularity', { ascending: false, nullsFirst: false })
+    }
+
+    const result = await query.range(offset, offset + limit - 1)
+
+    if (!result.error) {
+      data = (result.data || []) as AnimeRow[]
+      count = result.count || 0
+      lastError = null
       break
-    case 'end_date':
-      query = query.order('end_date', { ascending: true, nullsFirst: false })
+    }
+
+    lastError = result.error
+
+    if (tableName !== 'animes_active') {
       break
-    default:
-      query = query.order('popularity', { ascending: false, nullsFirst: false })
+    }
   }
 
-  query = query.range(offset, offset + limit - 1)
-
-  const { data, error, count } = await query
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  if (lastError) {
+    return NextResponse.json({ error: lastError.message }, { status: 500 })
   }
 
-  const anime = (data || []).map(row => ({
+  const anime = (data || []).map((row) => ({
     anime_id: row.anime_id,
     title: row.english_title || row.title,
     romaji_title: row.title,
@@ -80,11 +137,15 @@ export async function GET(request: NextRequest) {
   }))
 
   return NextResponse.json({
-    season: `${season} ${year}`,
+    season: buildWindowLabel(year, season),
     anime,
-    total: count || 0,
+    total: count,
     page,
     limit,
-    totalPages: Math.ceil((count || 0) / limit),
+    totalPages: Math.ceil(count / limit) || 1,
+    featuredWindow: {
+      startYear: FEATURED_START_YEAR,
+      endYear: FEATURED_END_YEAR,
+    },
   })
 }

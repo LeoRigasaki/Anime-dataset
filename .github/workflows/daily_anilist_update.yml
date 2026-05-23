@@ -12,11 +12,13 @@ jobs:
   update-anilist-data:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: true
+          token: ${{ github.token }}
       
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       
@@ -55,20 +57,9 @@ jobs:
             wc -l "$expected_file"
           fi
 
-      - name: Sync to Supabase
-        if: success()
-        continue-on-error: true
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      - name: Configure authenticated push
         run: |
-          expected_file="data/raw/anilist_seasonal_${{ env.CURRENT_DATE }}.csv"
-          if [ -f "$expected_file" ]; then
-            echo "Syncing $expected_file to Supabase..."
-            python -u src/sync_to_supabase.py --csv "$expected_file"
-          else
-            echo "WARNING: Expected CSV file not found, skipping Supabase sync"
-          fi
+          git remote set-url origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
 
       - name: Commit AniList Changes
         run: |

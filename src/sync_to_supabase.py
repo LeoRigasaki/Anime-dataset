@@ -17,12 +17,16 @@ import os
 import sys
 import glob
 import argparse
+from datetime import datetime
 from typing import List, Dict, Any
 
 import pandas as pd
 from dotenv import load_dotenv
 
 load_dotenv()
+
+DEFAULT_WINDOW_START_YEAR = 2026
+DEFAULT_WINDOW_END_YEAR = 2029
 
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -38,7 +42,7 @@ def load_csv_as_dicts(csv_path: str) -> List[Dict[str, Any]]:
     # Convert numeric fields from NaN/float to int
     int_fields = [
         'anime_id', 'mal_id', 'episodes', 'duration', 'season_year',
-        'score', 'mean_score', 'scored_by', 'rank', 'popularity',
+        'scored_by', 'rank', 'popularity',
         'popularity_rank', 'members', 'favorites', 'watching',
         'completed', 'on_hold', 'dropped', 'plan_to_watch',
         'next_airing_episode_at', 'next_episode_number'
@@ -46,6 +50,11 @@ def load_csv_as_dicts(csv_path: str) -> List[Dict[str, Any]]:
     for field in int_fields:
         if field in df.columns:
             df[field] = pd.to_numeric(df[field], errors='coerce').fillna(0).astype(int)
+
+    float_fields = ['score', 'mean_score']
+    for field in float_fields:
+        if field in df.columns:
+            df[field] = pd.to_numeric(df[field], errors='coerce').fillna(0.0)
 
     # Convert boolean fields
     bool_fields = ['is_adult', 'is_licensed']
@@ -61,11 +70,45 @@ def load_csv_as_dicts(csv_path: str) -> List[Dict[str, Any]]:
     return df.to_dict('records')
 
 
+def filter_records_by_window(
+    data: List[Dict[str, Any]],
+    window_start_year: int,
+    window_end_year: int
+) -> tuple[List[Dict[str, Any]], int]:
+    """Keep only the featured update window and count archived rows."""
+    filtered: List[Dict[str, Any]] = []
+    archived_count = 0
+
+    for record in data:
+        try:
+            season_year = int(record.get('season_year', 0) or 0)
+        except (TypeError, ValueError):
+            season_year = 0
+
+        if window_start_year <= season_year <= window_end_year:
+            filtered.append(record)
+        else:
+            archived_count += 1
+
+    return filtered, archived_count
+
+
+def build_version_name(csv_source: str | None) -> str:
+    """Create a unique dataset version name for each sync attempt."""
+    timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    if csv_source:
+        stem = os.path.splitext(os.path.basename(csv_source))[0]
+        return f"{stem.replace(' ', '_')}_{timestamp}"
+    return f"manual_sync_{timestamp}"
+
+
 def sync_from_data(
     data: List[Dict[str, Any]],
     batch_size: int = 100,
     dry_run: bool = False,
-    csv_source: str = None
+    csv_source: str = None,
+    window_start_year: int = DEFAULT_WINDOW_START_YEAR,
+    window_end_year: int = DEFAULT_WINDOW_END_YEAR,
 ) -> Dict[str, Any]:
     """
     Sync a list of anime dicts to Supabase.
@@ -75,16 +118,30 @@ def sync_from_data(
 
     result = {
         'total_records': len(data),
+        'window_records': 0,
+        'archived_records': 0,
         'records_synced': 0,
         'new_records': 0,
         'updated_records': 0,
         'errors': [],
-        'dry_run': dry_run
+        'dry_run': dry_run,
+        'dataset_version': None,
     }
 
+    filtered_data, archived_count = filter_records_by_window(
+        data,
+        window_start_year,
+        window_end_year,
+    )
+    result['window_records'] = len(filtered_data)
+    result['archived_records'] = archived_count
+
     if dry_run:
-        print(f"[DRY RUN] Would sync {len(data)} records to Supabase")
-        result['records_synced'] = len(data)
+        print(
+            f"[DRY RUN] Would sync {len(filtered_data)} records to Supabase "
+            f"(archive {archived_count} outside {window_start_year}-{window_end_year})"
+        )
+        result['records_synced'] = len(filtered_data)
         return result
 
     try:
@@ -95,7 +152,7 @@ def sync_from_data(
             return result
 
         # Determine new vs existing records
-        incoming_ids = [d.get('anime_id') for d in data if d.get('anime_id')]
+        incoming_ids = [d.get('anime_id') for d in filtered_data if d.get('anime_id')]
         existing_ids = client.get_existing_anime_ids(incoming_ids)
         new_ids = set(incoming_ids) - existing_ids
         new_count = len(new_ids)
@@ -106,7 +163,7 @@ def sync_from_data(
         # Build details summary
         seasons = {}
         genres_seen = set()
-        for d in data:
+        for d in filtered_data:
             sy = d.get('season_year', 0)
             s = d.get('season', '')
             key = f"{s} {sy}" if s and sy else str(sy)
@@ -119,19 +176,47 @@ def sync_from_data(
             'seasons': seasons,
             'genre_count': len(genres_seen),
             'new_anime_ids': sorted(list(new_ids))[:50],  # First 50 new IDs
+            'window_start_year': window_start_year,
+            'window_end_year': window_end_year,
+            'archived_records': archived_count,
         }
 
         log_id = client.start_sync_log('github_actions_sync', csv_source=csv_source)
+        dataset_version = None
+        version_id = None
+
+        if client.supports_dataset_versioning():
+            dataset_version = client.start_dataset_version(
+                version_name=build_version_name(csv_source),
+                csv_source=csv_source,
+                window_start_year=window_start_year,
+                window_end_year=window_end_year,
+                expected_records=len(filtered_data),
+                details=details,
+            )
+            version_id = dataset_version.get('id') if dataset_version else None
+            result['dataset_version'] = dataset_version.get('version_name') if dataset_version else None
 
         try:
-            synced = client.upsert_anime_batch(data, batch_size)
+            synced = client.upsert_anime_batch(filtered_data, batch_size, version_id=version_id)
             result['records_synced'] = synced
             result['new_records'] = new_count
             result['updated_records'] = updated_count
 
+            if version_id is not None:
+                client.activate_dataset_version(
+                    version_id,
+                    records_loaded=synced,
+                    details={
+                        **details,
+                        'records_loaded': synced,
+                        'csv_source': csv_source,
+                    }
+                )
+
             client.complete_sync_log(
                 log_id,
-                records_processed=len(data),
+                records_processed=len(filtered_data),
                 records_inserted=synced,
                 records_updated=0,
                 new_records=new_count,
@@ -139,9 +224,11 @@ def sync_from_data(
                 details=details
             )
         except Exception as e:
+            if version_id is not None:
+                client.fail_dataset_version(version_id, str(e))
             client.complete_sync_log(
                 log_id,
-                records_processed=len(data),
+                records_processed=len(filtered_data),
                 records_inserted=result['records_synced'],
                 records_updated=0,
                 error_message=str(e)
@@ -154,7 +241,13 @@ def sync_from_data(
     return result
 
 
-def sync_from_csv(csv_path: str, batch_size: int = 100, dry_run: bool = False) -> Dict[str, Any]:
+def sync_from_csv(
+    csv_path: str,
+    batch_size: int = 100,
+    dry_run: bool = False,
+    window_start_year: int = DEFAULT_WINDOW_START_YEAR,
+    window_end_year: int = DEFAULT_WINDOW_END_YEAR,
+) -> Dict[str, Any]:
     """Load CSV and sync to Supabase."""
     if not os.path.exists(csv_path):
         return {'total_records': 0, 'records_synced': 0, 'errors': [f"File not found: {csv_path}"]}
@@ -164,7 +257,14 @@ def sync_from_csv(csv_path: str, batch_size: int = 100, dry_run: bool = False) -
     print(f"Loaded {len(data)} records from CSV")
 
     csv_name = os.path.basename(csv_path)
-    return sync_from_data(data, batch_size, dry_run, csv_source=csv_name)
+    return sync_from_data(
+        data,
+        batch_size,
+        dry_run,
+        csv_source=csv_name,
+        window_start_year=window_start_year,
+        window_end_year=window_end_year,
+    )
 
 
 def main():
@@ -175,16 +275,28 @@ def main():
                         help='Glob pattern for CSV files (used with --csv-dir)')
     parser.add_argument('--batch-size', type=int, default=100)
     parser.add_argument('--dry-run', action='store_true', help='Validate without writing')
+    parser.add_argument('--window-start-year', type=int, default=DEFAULT_WINDOW_START_YEAR)
+    parser.add_argument('--window-end-year', type=int, default=DEFAULT_WINDOW_END_YEAR)
 
     args = parser.parse_args()
 
     if args.csv:
-        result = sync_from_csv(args.csv, args.batch_size, args.dry_run)
+        result = sync_from_csv(
+            args.csv,
+            args.batch_size,
+            args.dry_run,
+            window_start_year=args.window_start_year,
+            window_end_year=args.window_end_year,
+        )
         print(f"\nSync Summary:")
         print(f"  Total records: {result['total_records']}")
+        print(f"  Featured window records: {result.get('window_records', 0)}")
+        print(f"  Archived outside window: {result.get('archived_records', 0)}")
         print(f"  Records synced: {result['records_synced']}")
         print(f"  New anime: {result.get('new_records', 0)}")
         print(f"  Updated anime: {result.get('updated_records', 0)}")
+        if result.get('dataset_version'):
+            print(f"  Dataset version: {result['dataset_version']}")
         if result['errors']:
             print(f"  Errors: {len(result['errors'])}")
             for err in result['errors']:
@@ -202,7 +314,13 @@ def main():
         total_errors = []
         for csv_file in files:
             print(f"\n--- Syncing {os.path.basename(csv_file)} ---")
-            result = sync_from_csv(csv_file, args.batch_size, args.dry_run)
+            result = sync_from_csv(
+                csv_file,
+                args.batch_size,
+                args.dry_run,
+                window_start_year=args.window_start_year,
+                window_end_year=args.window_end_year,
+            )
             total_synced += result['records_synced']
             total_errors.extend(result['errors'])
 
