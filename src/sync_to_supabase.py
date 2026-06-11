@@ -203,6 +203,12 @@ def sync_from_data(
             result['new_records'] = new_count
             result['updated_records'] = updated_count
 
+            if synced < len(filtered_data):
+                raise RuntimeError(
+                    f"Only {synced}/{len(filtered_data)} records upserted; "
+                    "refusing to activate incomplete dataset version"
+                )
+
             if version_id is not None:
                 client.activate_dataset_version(
                     version_id,

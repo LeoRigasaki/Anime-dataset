@@ -128,16 +128,24 @@ class SupabaseClient:
 
         now = datetime.utcnow().isoformat()
         self.client.table('dataset_versions').update({
-            'status': 'active',
             'records_loaded': records_loaded,
             'completed_at': now,
-            'activated_at': now,
             'details': details or {},
         }).eq('id', version_id).execute()
 
-        self.client.table('dataset_versions').update({
-            'status': 'archived',
-        }).eq('status', 'active').neq('id', version_id).execute()
+        try:
+            # Atomic archive-old + activate-new in one transaction
+            self.client.rpc('activate_dataset_version', {'new_version_id': version_id}).execute()
+        except Exception:
+            # Older schema without the SQL function: two-step fallback
+            self.client.table('dataset_versions').update({
+                'status': 'active',
+                'activated_at': now,
+            }).eq('id', version_id).execute()
+
+            self.client.table('dataset_versions').update({
+                'status': 'archived',
+            }).eq('status', 'active').neq('id', version_id).execute()
 
     def fail_dataset_version(self, version_id: int, error_message: str) -> None:
         """Mark a loading dataset version as failed."""
