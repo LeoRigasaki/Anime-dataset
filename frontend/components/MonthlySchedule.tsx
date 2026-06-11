@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Calendar, Clock, ChevronLeft, ChevronRight, X, Loader2, Sparkles, Star, Trophy } from 'lucide-react'
@@ -26,8 +26,6 @@ interface MonthlyScheduleProps {
   initialSelectedDate?: string | null
   onStateChange?: (date: Date, selectedDate: string | null) => void
 }
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
@@ -56,7 +54,7 @@ export default function MonthlySchedule({
 
   const [scheduleData, setScheduleData] = useState<Map<string, ScheduleItem[]>>(new Map())
   const [loading, setLoading] = useState(true)
-  const [loadingProgress, setLoadingProgress] = useState(0)
+  const rangeCache = useRef<Map<string, Map<string, ScheduleItem[]>>>(new Map())
 
   const todayKey = formatLocalDateKey(new Date())
   const [currentDate, setCurrentDate] = useState(initialDate || new Date())
@@ -88,36 +86,9 @@ export default function MonthlySchedule({
     return days
   }, [currentDate])
 
-  const weeksToFetch = useMemo(() => {
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-
-    const currentMonday = new Date(today)
-    const dayOfWeek = today.getDay()
-    const daysToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
-    currentMonday.setDate(today.getDate() + daysToMonday)
-
-    const firstCalendarDay = calendarDays[0]
-    const weeks: number[] = []
-    const msPerWeek = 7 * 24 * 60 * 60 * 1000
-
-    const firstWeekMonday = new Date(firstCalendarDay)
-    const firstDayOfWeek = firstCalendarDay.getDay()
-    const daysToFirstMonday = firstDayOfWeek === 0 ? -6 : 1 - firstDayOfWeek
-    firstWeekMonday.setDate(firstCalendarDay.getDate() + daysToFirstMonday)
-
-    const startOffset = Math.round((firstWeekMonday.getTime() - currentMonday.getTime()) / msPerWeek)
-
-    for (let i = 0; i < 6; i++) {
-      weeks.push(startOffset + i)
-    }
-
-    return weeks
-  }, [calendarDays])
-
   useEffect(() => {
     loadMonthSchedule()
-  }, [weeksToFetch])
+  }, [calendarDays])
 
   useEffect(() => {
     if (selectedDate && scheduleData.size > 0) {
@@ -131,48 +102,54 @@ export default function MonthlySchedule({
   }, [currentDate, selectedDate, onStateChange])
 
   const loadMonthSchedule = async () => {
+    // Fetch the whole visible calendar range in one request, padded a day on
+    // each side so local-timezone grouping never misses boundary episodes.
+    const rangeStart = new Date(calendarDays[0])
+    rangeStart.setDate(rangeStart.getDate() - 1)
+    const rangeEnd = new Date(calendarDays[calendarDays.length - 1])
+    rangeEnd.setDate(rangeEnd.getDate() + 2)
+
+    const startKey = formatLocalDateKey(rangeStart)
+    const endKey = formatLocalDateKey(rangeEnd)
+    const cacheKey = `${startKey}_${endKey}`
+
+    const cached = rangeCache.current.get(cacheKey)
+    if (cached) {
+      setScheduleData(cached)
+      applyDefaultSelection(cached)
+      return
+    }
+
     setLoading(true)
-    setLoadingProgress(0)
     const newScheduleData = new Map<string, ScheduleItem[]>()
 
     try {
-      let completedWeeks = 0
+      const res = await fetch(`/api/schedule?start=${startKey}&end=${endKey}`)
+      const data = await res.json()
 
-      for (const offset of weeksToFetch) {
-        try {
-          const res = await fetch(`${API_URL}/anime/schedule/weekly?weeks_offset=${offset}`)
-          const weekData = await res.json()
-
-          if (weekData?.schedule) {
-            Object.entries(weekData.schedule).forEach(([, items]) => {
-              (items as ScheduleItem[]).forEach(item => {
-                const airingDate = new Date(item.airing_at * 1000)
-                const localDateKey = formatLocalDateKey(airingDate)
-
-                if (!newScheduleData.has(localDateKey)) {
-                  newScheduleData.set(localDateKey, [])
-                }
-                newScheduleData.get(localDateKey)!.push({
-                  ...item,
-                  airing_date: localDateKey
-                })
-              })
-            })
-          }
-        } catch (err) {
-          console.warn(`Failed to fetch week ${offset}:`, err)
+      for (const item of (data.items || []) as ScheduleItem[]) {
+        const localDateKey = formatLocalDateKey(new Date(item.airing_at * 1000))
+        if (!newScheduleData.has(localDateKey)) {
+          newScheduleData.set(localDateKey, [])
         }
-
-        completedWeeks++
-        setLoadingProgress(Math.round((completedWeeks / weeksToFetch.length) * 100))
-
-        if (completedWeeks < weeksToFetch.length) {
-          await new Promise(resolve => setTimeout(resolve, 100))
-        }
+        newScheduleData.get(localDateKey)!.push({
+          ...item,
+          airing_date: localDateKey
+        })
       }
 
+      rangeCache.current.set(cacheKey, newScheduleData)
       setScheduleData(newScheduleData)
+      applyDefaultSelection(newScheduleData)
+    } catch (error) {
+      console.error('Failed to load monthly schedule:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
 
+  const applyDefaultSelection = (newScheduleData: Map<string, ScheduleItem[]>) => {
+    {
       if (!selectedDate || !newScheduleData.has(selectedDate)) {
         const today = new Date()
         const todayStr = formatLocalDateKey(today)
@@ -205,11 +182,6 @@ export default function MonthlySchedule({
           }
         }
       }
-    } catch (error) {
-      console.error('Failed to load monthly schedule:', error)
-    } finally {
-      setLoading(false)
-      setLoadingProgress(100)
     }
   }
 
@@ -258,23 +230,6 @@ export default function MonthlySchedule({
   // Premium Loading Skeleton
   const LoadingSkeleton = () => (
     <div className="glass-card p-6">
-      {/* Progress indicator */}
-      <div className="mb-6 space-y-3">
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground flex items-center gap-2">
-            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-            <span>Loading schedule...</span>
-          </span>
-          <span className="text-primary font-semibold">{loadingProgress}%</span>
-        </div>
-        <div className="h-2 bg-muted/50 rounded-full overflow-hidden">
-          <div
-            className="h-full progress-glow transition-all duration-300 ease-out"
-            style={{ width: `${loadingProgress}%` }}
-          />
-        </div>
-      </div>
-
       {/* Day Headers */}
       <div className="grid grid-cols-7 gap-2 mb-3">
         {DAYS_OF_WEEK.map(day => (
