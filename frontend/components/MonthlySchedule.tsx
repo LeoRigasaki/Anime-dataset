@@ -505,9 +505,9 @@ export default function MonthlySchedule({
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {selectedAnime
+                      {[...selectedAnime]
                         .sort((a, b) => a.airing_at - b.airing_at)
-                        .map((item, index) => {
+                        .map((item) => {
                           const isFinale = item.total_episodes && item.episode === item.total_episodes
 
                           return (
@@ -516,8 +516,7 @@ export default function MonthlySchedule({
                               href={`https://anilist.co/anime/${item.anime_id}`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="block group animate-fade-in"
-                              style={{ animationDelay: `${index * 50}ms` }}
+                              className="block group"
                             >
                               <div className={`
                                 glass-subtle rounded-xl overflow-hidden transition-all duration-200

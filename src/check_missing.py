@@ -5,13 +5,14 @@ import os
 
 def get_latest_anime_file(folder='data/raw'):
     """Get the most recent anime seasonal CSV file."""
-    pattern = os.path.join(folder, 'anime_seasonal_*.csv')
+    # Matches anime_seasonal_* (MAL), anilist_seasonal_*, jikan_seasonal_*
+    pattern = os.path.join(folder, '*_seasonal_*.csv')
     files = glob.glob(pattern)
     if not files:
         raise FileNotFoundError("No anime seasonal CSV files found")
     
-    # Sort files by name (which includes date) and get the most recent
-    latest_file = sorted(files)[-1]
+    # Sort by the YYYYMMDD date suffix so mixed prefixes compare correctly
+    latest_file = sorted(files, key=lambda f: f.rsplit('_', 1)[-1])[-1]
     return latest_file
 
 def main():

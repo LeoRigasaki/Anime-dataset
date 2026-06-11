@@ -12,11 +12,13 @@ jobs:
   update-anilist-data:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: true
+          token: ${{ github.token }}
       
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       
@@ -54,6 +56,10 @@ jobs:
             echo "Found new AniList file: $expected_file"
             wc -l "$expected_file"
           fi
+
+      - name: Configure authenticated push
+        run: |
+          git remote set-url origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
 
       - name: Commit AniList Changes
         run: |
