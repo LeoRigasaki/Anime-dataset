@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 
 const FALLBACK_GENRES = [
@@ -16,15 +16,22 @@ type GenreRow = {
   genres: string[] | null
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const includeAdult = request.nextUrl.searchParams.get('adult') === 'true'
   try {
     for (const tableName of TABLE_CANDIDATES) {
-      const result = await supabase
+      let query = supabase
         .from(tableName)
         .select('genres')
         .gte('season_year', FEATURED_START_YEAR)
         .lte('season_year', FEATURED_END_YEAR)
         .limit(5000)
+
+      if (!includeAdult) {
+        query = query.not('is_adult', 'is', true)
+      }
+
+      const result = await query
 
       if (result.error) {
         if (tableName === 'animes_active') {

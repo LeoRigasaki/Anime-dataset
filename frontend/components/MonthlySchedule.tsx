@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { Card, CardContent } from '@/components/ui/card'
+import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Calendar, Clock, ChevronLeft, ChevronRight, X, Loader2, Sparkles, Star, Trophy } from 'lucide-react'
 
@@ -25,6 +25,7 @@ interface MonthlyScheduleProps {
   initialDate?: Date
   initialSelectedDate?: string | null
   onStateChange?: (date: Date, selectedDate: string | null) => void
+  showAdult?: boolean
 }
 
 const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -34,7 +35,8 @@ const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
 export default function MonthlySchedule({
   initialDate,
   initialSelectedDate,
-  onStateChange
+  onStateChange,
+  showAdult = false
 }: MonthlyScheduleProps) {
   const formatLocalDateKey = useCallback((date: Date): string => {
     const year = date.getFullYear()
@@ -54,6 +56,7 @@ export default function MonthlySchedule({
 
   const [scheduleData, setScheduleData] = useState<Map<string, ScheduleItem[]>>(new Map())
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const rangeCache = useRef<Map<string, Map<string, ScheduleItem[]>>>(new Map())
 
   const todayKey = formatLocalDateKey(new Date())
@@ -88,7 +91,7 @@ export default function MonthlySchedule({
 
   useEffect(() => {
     loadMonthSchedule()
-  }, [calendarDays])
+  }, [calendarDays, showAdult])
 
   useEffect(() => {
     if (selectedDate && scheduleData.size > 0) {
@@ -111,7 +114,7 @@ export default function MonthlySchedule({
 
     const startKey = formatLocalDateKey(rangeStart)
     const endKey = formatLocalDateKey(rangeEnd)
-    const cacheKey = `${startKey}_${endKey}`
+    const cacheKey = `${startKey}_${endKey}_${showAdult ? 'adult' : 'sfw'}`
 
     const cached = rangeCache.current.get(cacheKey)
     if (cached) {
@@ -121,11 +124,14 @@ export default function MonthlySchedule({
     }
 
     setLoading(true)
+    setLoadError(false)
     const newScheduleData = new Map<string, ScheduleItem[]>()
 
     try {
-      const res = await fetch(`/api/schedule?start=${startKey}&end=${endKey}`)
+      const res = await fetch(`/api/schedule?start=${startKey}&end=${endKey}${showAdult ? '&adult=true' : ''}`)
+      if (!res.ok) throw new Error(`Request failed (${res.status})`)
       const data = await res.json()
+      if (data.error) throw new Error(data.error)
 
       for (const item of (data.items || []) as ScheduleItem[]) {
         const localDateKey = formatLocalDateKey(new Date(item.airing_at * 1000))
@@ -143,6 +149,8 @@ export default function MonthlySchedule({
       applyDefaultSelection(newScheduleData)
     } catch (error) {
       console.error('Failed to load monthly schedule:', error)
+      setLoadError(true)
+      setScheduleData(new Map())
     } finally {
       setLoading(false)
     }
@@ -229,7 +237,7 @@ export default function MonthlySchedule({
 
   // Premium Loading Skeleton
   const LoadingSkeleton = () => (
-    <div className="glass-card p-6">
+    <div className="surface-card p-6">
       {/* Day Headers */}
       <div className="grid grid-cols-7 gap-2 mb-3">
         {DAYS_OF_WEEK.map(day => (
@@ -257,11 +265,8 @@ export default function MonthlySchedule({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="animate-fade-in">
           <div className="flex items-center gap-3 mb-2">
-            <div className="relative">
-              <div className="w-10 h-10 rounded-xl bg-accent/20 flex items-center justify-center">
-                <Calendar className="w-5 h-5 text-accent" />
-              </div>
-              <div className="absolute -inset-1 bg-accent/10 rounded-xl blur-lg -z-10" />
+            <div className="w-10 h-10 rounded-xl bg-primary/15 flex items-center justify-center">
+              <Calendar className="w-5 h-5 text-primary" />
             </div>
             <div>
               <h2 className="font-display text-2xl md:text-3xl font-bold tracking-tight">
@@ -278,7 +283,7 @@ export default function MonthlySchedule({
             ) : (
               <span className="flex items-center gap-2">
                 <Sparkles className="w-3 h-3 text-primary" />
-                {totalEpisodes} episodes this month
+                {totalEpisodes} episodes this month · times shown in your local timezone
               </span>
             )}
           </p>
@@ -291,7 +296,7 @@ export default function MonthlySchedule({
             size="sm"
             onClick={() => navigateMonth(-1)}
             disabled={loading}
-            className="glass-subtle border-white/5 hover:bg-white/5"
+            className="border-border"
           >
             <ChevronLeft className="w-4 h-4" />
             <span className="hidden sm:inline ml-1">Prev</span>
@@ -301,7 +306,7 @@ export default function MonthlySchedule({
             size="sm"
             onClick={goToToday}
             disabled={loading}
-            className="glass-subtle border-white/5 hover:bg-white/5 px-4"
+            className="border-border px-4"
           >
             Today
           </Button>
@@ -310,7 +315,7 @@ export default function MonthlySchedule({
             size="sm"
             onClick={() => navigateMonth(1)}
             disabled={loading}
-            className="glass-subtle border-white/5 hover:bg-white/5"
+            className="border-border"
           >
             <span className="hidden sm:inline mr-1">Next</span>
             <ChevronRight className="w-4 h-4" />
@@ -323,8 +328,25 @@ export default function MonthlySchedule({
         <div className="flex-1 min-w-0 animate-fade-in" style={{ animationDelay: '150ms' }}>
           {loading ? (
             <LoadingSkeleton />
+          ) : loadError ? (
+            <div className="surface-card p-10 flex flex-col items-center text-center">
+              <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center mb-3">
+                <X className="w-7 h-7 text-destructive" />
+              </div>
+              <h3 className="font-display font-semibold text-lg mb-1">Couldn&apos;t load the schedule</h3>
+              <p className="text-muted-foreground text-sm mb-4">Check your connection and try again.</p>
+              <Button variant="outline" size="sm" onClick={loadMonthSchedule}>
+                Retry
+              </Button>
+            </div>
           ) : (
-            <div className="glass-card p-4 sm:p-6">
+            <div className="surface-card p-4 sm:p-6">
+              {totalEpisodes === 0 && (
+                <div className="mb-4 px-4 py-3 rounded-lg bg-secondary border border-border text-sm text-muted-foreground">
+                  No episode data for this month — the schedule covers a rolling window of about
+                  two weeks back and six weeks ahead, refreshed daily.
+                </div>
+              )}
               {/* Day Headers */}
               <div className="grid grid-cols-7 gap-2 mb-3">
                 {DAYS_OF_WEEK.map(day => (
@@ -361,7 +383,7 @@ export default function MonthlySchedule({
                         text-sm font-semibold
                         ${currentMonth ? 'text-foreground' : 'text-muted-foreground'}
                         ${today ? 'text-primary' : ''}
-                        ${isSelected ? 'text-accent' : ''}
+                        ${isSelected ? 'text-primary' : ''}
                       `}>
                         {date.getDate()}
                       </span>
@@ -413,8 +435,8 @@ export default function MonthlySchedule({
               xl:relative xl:inset-auto xl:w-80 xl:shrink-0 xl:translate-x-0
               ${selectedDate ? 'translate-x-0' : '-translate-x-full'}
             `}>
-              <div className="glass-card h-full xl:sticky xl:top-24 overflow-hidden flex flex-col rounded-none xl:rounded-xl border-r xl:border-r-0 border-white/5">
-                <div className="p-5 border-b border-white/5">
+              <div className="surface-card h-full xl:sticky xl:top-24 overflow-hidden flex flex-col rounded-none xl:rounded-xl border-r xl:border-r-0 border-border">
+                <div className="p-5 border-b border-border">
                   <div className="flex items-center justify-between">
                     <div>
                       <h3 className="font-display font-bold text-lg">
@@ -437,7 +459,7 @@ export default function MonthlySchedule({
                       variant="ghost"
                       size="sm"
                       onClick={() => setSelectedDate(null)}
-                      className="xl:hidden hover:bg-white/5 rounded-lg"
+                      className="xl:hidden hover:bg-accent rounded-lg"
                     >
                       <X className="w-5 h-5" />
                     </Button>
@@ -474,18 +496,20 @@ export default function MonthlySchedule({
                               className="block group"
                             >
                               <div className={`
-                                glass-subtle rounded-xl overflow-hidden transition-all duration-200
+                                surface-subtle rounded-xl overflow-hidden transition-all duration-200
                                 ${isFinale
                                   ? 'ring-1 ring-amber-500/50 bg-amber-500/5'
-                                  : 'hover:bg-white/5'
+                                  : 'hover:bg-accent'
                                 }
                               `}>
                                 <div className="flex gap-3 p-3">
                                   {item.cover_image && (
                                     <div className="relative shrink-0">
-                                      <img
+                                      <Image
                                         src={item.cover_image}
                                         alt={item.title}
+                                        width={56}
+                                        height={80}
                                         className="w-14 h-20 object-cover rounded-lg shadow-lg"
                                       />
                                       {isFinale && (
@@ -494,12 +518,12 @@ export default function MonthlySchedule({
                                           END
                                         </div>
                                       )}
-                                      {item.score && (
+                                      {item.score ? (
                                         <div className="absolute -top-1 -left-1 score-badge text-[9px] px-1 py-0.5 flex items-center gap-0.5">
                                           <Star className="w-2 h-2 text-amber-400 fill-amber-400" />
                                           {item.score}
                                         </div>
-                                      )}
+                                      ) : null}
                                     </div>
                                   )}
                                   <div className="flex-1 min-w-0 py-0.5">
@@ -521,8 +545,8 @@ export default function MonthlySchedule({
                                       )}
                                     </div>
                                     <div className="flex items-center gap-1.5 mt-2">
-                                      <Clock className="w-3 h-3 text-accent" />
-                                      <span className="text-xs font-semibold text-accent">
+                                      <Clock className="w-3 h-3 text-primary" />
+                                      <span className="text-xs font-semibold text-primary">
                                         {formatLocalTime(item.airing_at)}
                                       </span>
                                     </div>
