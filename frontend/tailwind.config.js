@@ -15,8 +15,8 @@ module.exports = {
     },
     extend: {
       fontFamily: {
-        display: ['Outfit', 'system-ui', 'sans-serif'],
-        body: ['Plus Jakarta Sans', 'system-ui', 'sans-serif'],
+        display: ['var(--font-display)', 'system-ui', 'sans-serif'],
+        body: ['var(--font-body)', 'system-ui', 'sans-serif'],
       },
       colors: {
         border: "hsl(var(--border))",
@@ -65,12 +65,7 @@ module.exports = {
         "2xl": "calc(var(--radius) + 8px)",
       },
       boxShadow: {
-        'glow': '0 0 20px -5px hsl(var(--primary) / 0.3)',
-        'glow-lg': '0 0 40px -10px hsl(var(--primary) / 0.4)',
-        'glow-accent': '0 0 20px -5px hsl(var(--accent) / 0.3)',
-        'inner-light': 'inset 0 1px 0 0 rgba(255, 255, 255, 0.05)',
-        'card': '0 8px 32px -8px rgba(0, 0, 0, 0.5)',
-        'card-hover': '0 20px 40px -15px rgba(0, 0, 0, 0.5), 0 0 60px -20px rgba(255, 107, 138, 0.3)',
+        'card': '0 8px 24px rgba(0, 0, 0, 0.35)',
       },
       backgroundImage: {
         'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
@@ -110,10 +105,6 @@ module.exports = {
           from: { opacity: "0", transform: "translateX(20px)" },
           to: { opacity: "1", transform: "translateX(0)" },
         },
-        "glow-pulse": {
-          "0%, 100%": { boxShadow: "0 0 20px -5px hsl(var(--primary) / 0.3)" },
-          "50%": { boxShadow: "0 0 30px -5px hsl(var(--primary) / 0.5)" },
-        },
         "shimmer": {
           "0%": { backgroundPosition: "-200% 0" },
           "100%": { backgroundPosition: "200% 0" },
@@ -136,7 +127,6 @@ module.exports = {
         "scale-in": "scale-in 0.2s ease-out",
         "slide-in-left": "slide-in-left 0.3s ease-out",
         "slide-in-right": "slide-in-right 0.3s ease-out",
-        "glow-pulse": "glow-pulse 2s ease-in-out infinite",
         "shimmer": "shimmer 2s linear infinite",
         "float": "float 3s ease-in-out infinite",
         "pulse-soft": "pulse-soft 2s ease-in-out infinite",

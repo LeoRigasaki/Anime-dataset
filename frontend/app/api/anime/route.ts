@@ -23,6 +23,9 @@ type AnimeRow = {
   next_episode_number: number | null
   start_date: string | null
   end_date: string | null
+  synopsis: string | null
+  main_studios: string[] | null
+  site_url: string | null
 }
 
 function parseOptionalInt(value: string | null): number | null {
@@ -48,6 +51,9 @@ export async function GET(request: NextRequest) {
   const year = parseOptionalInt(searchParams.get('year'))
   const status = searchParams.get('status')
   const genres = searchParams.get('genres')
+  // Strip characters that would break PostgREST or() filter syntax
+  const search = (searchParams.get('search') || '').replace(/[,%()]/g, ' ').trim()
+  const includeAdult = searchParams.get('adult') === 'true'
   const sort = searchParams.get('sort') || 'popularity'
   const page = Math.max(parseOptionalInt(searchParams.get('page')) || 1, 1)
   const limit = Math.min(parseOptionalInt(searchParams.get('limit')) || 30, 50)
@@ -61,9 +67,13 @@ export async function GET(request: NextRequest) {
     let query = supabase
       .from(tableName)
       .select(
-        'anime_id, title, english_title, type, episodes, status, season, season_year, genres, score, popularity, cover_image_large, is_adult, next_airing_episode_at, next_episode_number, start_date, end_date',
+        'anime_id, title, english_title, type, episodes, status, season, season_year, genres, score, popularity, cover_image_large, is_adult, next_airing_episode_at, next_episode_number, start_date, end_date, synopsis, main_studios, site_url',
         { count: 'exact' }
       )
+
+    if (!includeAdult) {
+      query = query.not('is_adult', 'is', true)
+    }
 
     if (year !== null) {
       query = query.eq('season_year', year)
@@ -86,6 +96,10 @@ export async function GET(request: NextRequest) {
       if (genreArray.length > 0) {
         query = query.contains('genres', genreArray)
       }
+    }
+
+    if (search) {
+      query = query.or(`title.ilike.%${search}%,english_title.ilike.%${search}%`)
     }
 
     switch (sort) {
@@ -134,6 +148,11 @@ export async function GET(request: NextRequest) {
     start_date: row.start_date,
     next_airing_episode_at: row.next_airing_episode_at,
     next_episode_number: row.next_episode_number,
+    season: row.season,
+    season_year: row.season_year,
+    synopsis: row.synopsis,
+    studios: row.main_studios || [],
+    site_url: row.site_url,
   }))
 
   return NextResponse.json({

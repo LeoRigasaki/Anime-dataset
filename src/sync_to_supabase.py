@@ -146,6 +146,7 @@ def fetch_airing_schedule_items(
             'score': item.get('score'),
             'total_episodes': item.get('total_episodes'),
             'anime_status': item.get('status'),
+            'is_adult': bool(item.get('is_adult')),
         })
     return rows
 

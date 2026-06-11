@@ -1,8 +1,15 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Calendar, Clock, Filter, PlayCircle, CheckCircle2, X, Sparkles, MessageSquare, Search, Send, Star, ChevronLeft, ChevronRight } from 'lucide-react'
+import Image from 'next/image'
+import { Calendar, Clock, Filter, PlayCircle, CheckCircle2, X, Sparkles, Search, Star, ChevronLeft, ChevronRight, ExternalLink, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   Select,
   SelectContent,
@@ -12,34 +19,10 @@ import {
 } from '@/components/ui/select'
 import MonthlySchedule from '@/components/MonthlySchedule'
 
-interface AnimeData {
-  anime_id: number
-  title: string
-  cover_image?: string
-  status?: string
-  predicted_completion?: string
-  score?: number
-  episodes?: number
-  current_episode?: number
-  genres?: string[]
-  days_until_complete?: number
-  is_adult?: boolean
-  next_episode?: {
-    number: number
-    airs_at?: string
-    airs_in_human?: string
-  }
-}
-
-interface Message {
-  role: 'user' | 'assistant'
-  content: string
-  anime?: AnimeData[]
-}
-
 interface Anime {
   anime_id: number
   title: string
+  romaji_title?: string
   status: string
   episodes?: number
   current_episode?: number
@@ -47,100 +30,36 @@ interface Anime {
   cover_image?: string
   score?: number
   genres?: string[]
-  days_until_complete?: number
   is_adult?: boolean
-  next_episode?: {
-    number: number
-    airs_at?: string
-    airs_in_human?: string
-  }
+  season?: string
+  season_year?: number
+  synopsis?: string
+  studios?: string[]
+  site_url?: string
+  start_date?: string
+  next_airing_episode_at?: number
+  next_episode_number?: number
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-
-// Enhanced markdown parser for chat responses
-const parseMarkdown = (text: string): React.ReactNode[] => {
-  const lines = text.split('\n')
-  const elements: React.ReactNode[] = []
-
-  lines.forEach((line, lineIndex) => {
-    const parseInline = (str: string): React.ReactNode[] => {
-      const parts: React.ReactNode[] = []
-      let remaining = str
-      let keyIndex = 0
-
-      while (remaining.length > 0) {
-        const boldMatch = remaining.match(/\*\*(.+?)\*\*/)
-        if (boldMatch && boldMatch.index !== undefined) {
-          if (boldMatch.index > 0) {
-            parts.push(remaining.slice(0, boldMatch.index))
-          }
-          parts.push(<strong key={`b-${keyIndex++}`} className="font-semibold text-primary">{boldMatch[1]}</strong>)
-          remaining = remaining.slice(boldMatch.index + boldMatch[0].length)
-          continue
-        }
-
-        const italicMatch = remaining.match(/\*(.+?)\*/)
-        if (italicMatch && italicMatch.index !== undefined) {
-          if (italicMatch.index > 0) {
-            parts.push(remaining.slice(0, italicMatch.index))
-          }
-          parts.push(<em key={`i-${keyIndex++}`} className="italic text-muted-foreground">{italicMatch[1]}</em>)
-          remaining = remaining.slice(italicMatch.index + italicMatch[0].length)
-          continue
-        }
-
-        parts.push(remaining)
-        break
-      }
-
-      return parts
-    }
-
-    if (line.startsWith('* ') || line.startsWith('- ')) {
-      elements.push(
-        <div key={lineIndex} className="flex items-start gap-3 ml-1">
-          <span className="w-1.5 h-1.5 rounded-full bg-primary/60 mt-2 shrink-0" />
-          <span>{parseInline(line.slice(2))}</span>
-        </div>
-      )
-    } else if (line.match(/^\d+\. /)) {
-      const match = line.match(/^(\d+)\. (.*)/)
-      if (match) {
-        elements.push(
-          <div key={lineIndex} className="flex items-start gap-3 ml-1">
-            <span className="text-primary font-medium min-w-[1.5em]">{match[1]}.</span>
-            <span>{parseInline(match[2])}</span>
-          </div>
-        )
-      }
-    } else if (line.trim() === '') {
-      elements.push(<div key={lineIndex} className="h-3" />)
-    } else {
-      elements.push(<div key={lineIndex}>{parseInline(line)}</div>)
-    }
-  })
-
-  return elements
-}
-
-const EXAMPLE_QUERIES = [
-  "Which anime are ending this week?",
-  "Recommend anime similar to Solo Leveling",
-  "What action anime are airing this season?",
-  "What episodes air tomorrow?",
-]
-
-type Tab = 'chat' | 'browse' | 'schedule'
+type Tab = 'browse' | 'schedule'
 type StatusFilter = 'all' | 'releasing' | 'finished' | 'upcoming'
-type SortOption = 'popularity' | 'completion' | 'score'
+type SortOption = 'popularity' | 'end_date' | 'score'
+
+const stripHtml = (text: string) => text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+
+const formatRelativeTime = (iso: string): string => {
+  const diffMs = Date.now() - new Date(iso).getTime()
+  const hours = Math.floor(diffMs / 3600000)
+  if (hours < 1) return 'less than an hour ago'
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return days === 1 ? 'yesterday' : `${days} days ago`
+}
 
 export default function Home() {
   const [tab, setTab] = useState<Tab>('browse')
-  const [messages, setMessages] = useState<Message[]>([])
-  const [input, setInput] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [apiStatus, setApiStatus] = useState<'checking' | 'online' | 'offline'>('checking')
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [animeList, setAnimeList] = useState<Anime[]>([])
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [sortBy, setSortBy] = useState<SortOption>('popularity')
@@ -151,8 +70,13 @@ export default function Home() {
   const [totalPages, setTotalPages] = useState(1)
   const [totalAnime, setTotalAnime] = useState(0)
   const [showGenreDropdown, setShowGenreDropdown] = useState(false)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const [searchInput, setSearchInput] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [showAdult, setShowAdult] = useState(false)
+  const [dataUpdatedAt, setDataUpdatedAt] = useState<string | null>(null)
+  const [detailAnime, setDetailAnime] = useState<Anime | null>(null)
   const genreDropdownRef = useRef<HTMLDivElement>(null)
+  const abortRef = useRef<AbortController | null>(null)
 
   // State persistence for schedule tab
   const [scheduleDate, setScheduleDate] = useState<Date>(new Date())
@@ -163,16 +87,20 @@ export default function Home() {
     setScheduleSelectedDate(selectedDate)
   }
 
+  // Restore the 18+ preference
   useEffect(() => {
-    fetch(`${API_URL}/health`)
-      .then(res => res.json())
-      .then(data => setApiStatus(data.agent_ready ? 'online' : 'offline'))
-      .catch(() => setApiStatus('offline'))
+    setShowAdult(localStorage.getItem('showAdult') === '1')
   }, [])
 
-  // Fetch genre list on mount
+  const toggleAdult = (value: boolean) => {
+    setShowAdult(value)
+    localStorage.setItem('showAdult', value ? '1' : '0')
+    setCurrentPage(1)
+  }
+
+  // Fetch genre list (refreshed when the 18+ toggle changes)
   useEffect(() => {
-    fetch('/api/anime/genres')
+    fetch(`/api/anime/genres${showAdult ? '?adult=true' : ''}`)
       .then(res => res.json())
       .then(data => setAllGenres(data.genres || []))
       .catch(() => {
@@ -180,7 +108,24 @@ export default function Home() {
           'Horror', 'Mecha', 'Music', 'Mystery', 'Psychological',
           'Romance', 'Sci-Fi', 'Slice of Life', 'Sports', 'Supernatural', 'Thriller'])
       })
+  }, [showAdult])
+
+  // Fetch data freshness on mount
+  useEffect(() => {
+    fetch('/api/meta')
+      .then(res => res.json())
+      .then(data => setDataUpdatedAt(data.updated_at || null))
+      .catch(() => setDataUpdatedAt(null))
   }, [])
+
+  // Debounce the search box into the actual query
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setSearchQuery(searchInput.trim())
+      setCurrentPage(1)
+    }, 300)
+    return () => clearTimeout(handle)
+  }, [searchInput])
 
   // Close genre dropdown when clicking outside
   useEffect(() => {
@@ -194,7 +139,13 @@ export default function Home() {
   }, [])
 
   const loadAnimeData = useCallback(async () => {
+    // Cancel any in-flight request so rapid filter changes can't race
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+
     setLoading(true)
+    setLoadError(null)
     try {
       const params = new URLSearchParams()
       if (statusFilter !== 'all') {
@@ -208,64 +159,39 @@ export default function Home() {
       if (selectedGenres.length > 0) {
         params.set('genres', selectedGenres.join(','))
       }
+      if (searchQuery) {
+        params.set('search', searchQuery)
+      }
+      if (showAdult) {
+        params.set('adult', 'true')
+      }
       params.set('sort', sortBy)
       params.set('page', String(currentPage))
       params.set('limit', '30')
 
-      const res = await fetch(`/api/anime?${params.toString()}`)
+      const res = await fetch(`/api/anime?${params.toString()}`, { signal: controller.signal })
+      if (!res.ok) throw new Error(`Request failed (${res.status})`)
       const data = await res.json()
+      if (data.error) throw new Error(data.error)
       setAnimeList(data.anime || [])
       setSeasonInfo(data.season || '')
       setTotalPages(data.totalPages || 1)
       setTotalAnime(data.total || 0)
+      setLoading(false)
     } catch (error) {
+      if ((error as Error).name === 'AbortError') return
       console.error('Failed to load anime:', error)
-    } finally {
+      setLoadError('Could not load the catalog. Check your connection and try again.')
+      setAnimeList([])
       setLoading(false)
     }
-  }, [statusFilter, selectedGenres, sortBy, currentPage])
+  }, [statusFilter, selectedGenres, sortBy, currentPage, searchQuery, showAdult])
 
   useEffect(() => {
     if (tab === 'browse') {
       loadAnimeData()
     }
   }, [tab, loadAnimeData])
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
-
-  const sendQuery = async (query: string) => {
-    if (!query.trim() || loading) return
-
-    const userMessage: Message = { role: 'user', content: query }
-    setMessages(prev => [...prev, userMessage])
-    setInput('')
-    setLoading(true)
-
-    try {
-      const res = await fetch(`${API_URL}/query`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query }),
-      })
-      const data = await res.json()
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: data.response || 'No response.',
-        anime: data.anime || []
-      }])
-    } catch (error) {
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Failed to connect to API.' }])
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    sendQuery(input)
-  }
 
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return 'Unknown'
@@ -291,41 +217,38 @@ export default function Home() {
     setCurrentPage(1)
   }
 
-  /* Premium Anime Card Component */
   const AnimeCard = ({ anime, index = 0 }: { anime: Anime; index?: number }) => (
-    <a
-      href={`https://anilist.co/anime/${anime.anime_id}`}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="block h-full animate-fade-in"
-      style={{ animationDelay: `${index * 30}ms` }}
+    <button
+      onClick={() => setDetailAnime(anime)}
+      className="block h-full w-full text-left animate-fade-in focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-xl"
+      style={{ animationDelay: `${Math.min(index, 12) * 30}ms` }}
     >
       <div className="anime-card h-full group">
-        {/* Cover Image Container */}
         <div className="anime-card-image aspect-[2/3] relative">
           {anime.cover_image ? (
-            <img
+            <Image
               src={anime.cover_image}
               alt={anime.title}
-              className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-              loading="lazy"
+              fill
+              sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, (max-width: 1536px) 20vw, 16vw"
+              className="object-cover transition-transform duration-300 group-hover:scale-[1.03]"
             />
           ) : (
-            <div className="w-full h-full flex items-center justify-center bg-muted/50">
+            <div className="w-full h-full flex items-center justify-center bg-muted">
               <Sparkles className="w-8 h-8 text-muted-foreground/30" />
             </div>
           )}
 
-          {/* Score Badge - Top Left */}
-          {anime.score && (
-            <div className="absolute top-3 left-3 score-badge flex items-center gap-1">
+          {/* Score Badge */}
+          {anime.score ? (
+            <div className="absolute top-3 left-3 score-badge flex items-center gap-1 z-10">
               <Star className="w-3 h-3 text-amber-400 fill-amber-400" />
               <span className="text-white">{anime.score}%</span>
             </div>
-          )}
+          ) : null}
 
-          {/* Status Badge - Top Right */}
-          <div className="absolute top-3 right-3 flex flex-col gap-1.5 items-end">
+          {/* Status Badge */}
+          <div className="absolute top-3 right-3 flex flex-col gap-1.5 items-end z-10">
             {anime.status && (
               <div className={`px-2.5 py-1 rounded-lg text-[10px] font-semibold tracking-wide uppercase ${
                 anime.status === 'FINISHED' ? 'status-finished' :
@@ -337,7 +260,7 @@ export default function Home() {
               </div>
             )}
             {anime.is_adult && (
-              <div className="px-2 py-1 rounded-lg bg-red-500/90 text-white text-[10px] font-bold">
+              <div className="px-2 py-1 rounded-lg bg-red-700 text-white text-[10px] font-bold">
                 18+
               </div>
             )}
@@ -349,13 +272,12 @@ export default function Home() {
               {anime.title}
             </h3>
 
-            {/* Genres */}
             {anime.genres && anime.genres.length > 0 && (
               <div className="flex flex-wrap gap-1 mb-3">
                 {anime.genres.slice(0, 3).map((genre, i) => (
                   <span
                     key={i}
-                    className="px-2 py-0.5 text-[9px] font-medium bg-white/10 backdrop-blur-sm text-white/90 rounded-full"
+                    className="px-2 py-0.5 text-[9px] font-medium bg-black/50 text-white/90 rounded-full"
                   >
                     {genre}
                   </span>
@@ -368,14 +290,13 @@ export default function Home() {
               </div>
             )}
 
-            {/* Episode & Completion Info */}
             <div className="space-y-1.5">
-              {anime.episodes && (
+              {anime.episodes ? (
                 <div className="flex items-center gap-2 text-xs text-white/80">
                   <PlayCircle className="w-3.5 h-3.5" />
-                  <span>{anime.current_episode || anime.episodes}/{anime.episodes} episodes</span>
+                  <span>{anime.episodes} episodes</span>
                 </div>
-              )}
+              ) : null}
 
               {anime.predicted_completion && anime.status !== 'FINISHED' && (
                 <div className="flex items-center gap-2 text-xs text-primary font-medium">
@@ -387,37 +308,34 @@ export default function Home() {
           </div>
         </div>
       </div>
-    </a>
+    </button>
   )
 
   return (
     <div className="min-h-screen flex flex-col">
-      {/* Premium Header */}
+      {/* Header */}
       <header className="header-blur sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between gap-4">
             {/* Logo */}
             <div className="flex items-center gap-3 min-w-0">
-              <div className="relative">
-                <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center">
-                  <Calendar className="w-5 h-5 text-primary" />
-                </div>
-                <div className="absolute -inset-1 bg-primary/20 rounded-xl blur-lg -z-10" />
+              <div className="w-10 h-10 rounded-xl bg-primary/15 flex items-center justify-center">
+                <Calendar className="w-5 h-5 text-primary" />
               </div>
               <div className="min-w-0">
                 <h1 className="font-display text-lg sm:text-xl font-bold tracking-tight truncate">
-                  <span className="text-gradient">Anime</span>
+                  <span className="text-primary">Anime</span>
                   <span className="text-foreground">Schedule</span>
                 </h1>
                 <p className="text-[10px] sm:text-xs text-muted-foreground font-medium tracking-wide hidden sm:block">
-                  Seasonal Tracker
+                  {dataUpdatedAt ? `Data updated ${formatRelativeTime(dataUpdatedAt)}` : 'Seasonal Tracker'}
                 </p>
               </div>
             </div>
 
             {/* Navigation Tabs */}
-            <nav className="flex items-center gap-1 sm:gap-2">
-              <div className="flex glass-subtle rounded-xl p-1">
+            <nav className="flex items-center">
+              <div className="flex surface-subtle rounded-xl p-1">
                 <button
                   onClick={() => setTab('browse')}
                   className={`nav-pill flex items-center gap-1.5 ${tab === 'browse' ? 'nav-pill-active' : 'nav-pill-inactive'}`}
@@ -433,18 +351,6 @@ export default function Home() {
                   <span className="hidden sm:inline">Schedule</span>
                 </button>
               </div>
-
-              {/* Status Indicator */}
-              <div className="flex items-center gap-2 px-3 py-2 glass-subtle rounded-xl">
-                <span className={`w-2 h-2 rounded-full ${
-                  apiStatus === 'online' ? 'status-online' :
-                  apiStatus === 'offline' ? 'bg-red-500' :
-                  'bg-amber-500 animate-pulse'
-                }`} />
-                <span className="text-xs text-muted-foreground hidden sm:inline">
-                  {apiStatus === 'online' ? 'Online' : apiStatus === 'offline' ? 'Offline' : '...'}
-                </span>
-              </div>
             </nav>
           </div>
         </div>
@@ -458,10 +364,11 @@ export default function Home() {
               initialDate={scheduleDate}
               initialSelectedDate={scheduleSelectedDate}
               onStateChange={handleScheduleStateChange}
+              showAdult={showAdult}
             />
           </div>
         </main>
-      ) : tab === 'browse' ? (
+      ) : (
         <main className="flex-1 overflow-y-auto">
           <div className="container mx-auto px-4 py-6">
             {/* Season Header & Filters */}
@@ -470,22 +377,33 @@ export default function Home() {
                 <div className="animate-fade-in">
                   <p className="text-xs font-medium text-primary mb-1 tracking-widest uppercase">Active Window</p>
                   <h2 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">
-                    {seasonInfo || 'Loading...'}
+                    {seasonInfo || 'Anime Catalog'}
                   </h2>
                   <p className="text-muted-foreground mt-1">
                     {totalAnime} anime {statusFilter !== 'all' && `• ${statusFilter}`}
+                    {searchQuery && ` • “${searchQuery}”`}
                   </p>
                 </div>
 
-                <Button
-                  onClick={loadAnimeData}
-                  variant="outline"
-                  size="sm"
-                  disabled={loading}
-                  className="glass-subtle border-white/5 hover:bg-white/5 self-start sm:self-auto"
-                >
-                  {loading ? 'Loading...' : 'Refresh'}
-                </Button>
+                {/* Search */}
+                <div className="relative w-full sm:w-72">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <input
+                    type="text"
+                    value={searchInput}
+                    onChange={e => setSearchInput(e.target.value)}
+                    placeholder="Search titles..."
+                    className="w-full bg-secondary border border-border rounded-xl pl-9 pr-9 py-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  />
+                  {searchInput && (
+                    <button
+                      onClick={() => setSearchInput('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Filter Bar */}
@@ -507,11 +425,7 @@ export default function Home() {
                       variant={statusFilter === key ? 'default' : 'outline'}
                       size="sm"
                       onClick={() => handleStatusFilterChange(key as StatusFilter)}
-                      className={`shrink-0 ${
-                        statusFilter === key
-                          ? 'btn-glow'
-                          : 'glass-subtle border-white/5 hover:bg-white/5'
-                      }`}
+                      className="shrink-0"
                     >
                       {Icon && <Icon className="w-3.5 h-3.5 mr-1.5" />}
                       {label}
@@ -522,21 +436,17 @@ export default function Home() {
                 {/* Genre Filter Dropdown */}
                 <div className="relative" ref={genreDropdownRef}>
                   <Button
-                    variant="outline"
+                    variant={selectedGenres.length > 0 ? 'default' : 'outline'}
                     size="sm"
                     onClick={() => setShowGenreDropdown(!showGenreDropdown)}
-                    className={`shrink-0 ${
-                      selectedGenres.length > 0
-                        ? 'btn-glow'
-                        : 'glass-subtle border-white/5 hover:bg-white/5'
-                    }`}
+                    className="shrink-0"
                   >
                     <Filter className="w-3.5 h-3.5 mr-1.5" />
                     Genres {selectedGenres.length > 0 && `(${selectedGenres.length})`}
                   </Button>
 
                   {showGenreDropdown && (
-                    <div className="absolute top-full mt-2 left-0 z-50 w-72 max-h-80 overflow-y-auto p-3 rounded-xl glass border border-white/10 shadow-xl">
+                    <div className="absolute top-full mt-2 left-0 z-50 w-72 max-h-80 overflow-y-auto p-3 rounded-xl bg-popover border border-border shadow-card">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-xs font-medium text-muted-foreground">Select Genres</span>
                         {selectedGenres.length > 0 && (
@@ -553,10 +463,10 @@ export default function Home() {
                           <button
                             key={genre}
                             onClick={() => handleGenreToggle(genre)}
-                            className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all ${
+                            className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
                               selectedGenres.includes(genre)
                                 ? 'bg-primary text-primary-foreground'
-                                : 'bg-white/5 text-muted-foreground hover:bg-white/10 hover:text-foreground'
+                                : 'bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground'
                             }`}
                           >
                             {genre}
@@ -567,12 +477,22 @@ export default function Home() {
                   )}
                 </div>
 
+                <label className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground cursor-pointer select-none shrink-0 px-2">
+                  <input
+                    type="checkbox"
+                    checked={showAdult}
+                    onChange={e => toggleAdult(e.target.checked)}
+                    className="w-4 h-4 rounded accent-primary"
+                  />
+                  18+
+                </label>
+
                 <div className="sm:ml-auto">
                   <Select value={sortBy} onValueChange={handleSortChange}>
-                    <SelectTrigger className="w-full sm:w-[180px] glass-subtle border-white/5">
+                    <SelectTrigger className="w-full sm:w-[180px]">
                       <SelectValue placeholder="Sort by" />
                     </SelectTrigger>
-                    <SelectContent className="glass border-white/5">
+                    <SelectContent>
                       <SelectItem value="popularity">Popularity</SelectItem>
                       <SelectItem value="end_date">Completion Date</SelectItem>
                       <SelectItem value="score">Rating</SelectItem>
@@ -584,20 +504,32 @@ export default function Home() {
 
             {/* Anime Grid */}
             {loading ? (
-              <div className="flex flex-col items-center justify-center py-20">
-                <div className="relative">
-                  <div className="w-12 h-12 rounded-full border-2 border-primary/20 border-t-primary animate-spin" />
-                  <div className="absolute inset-0 rounded-full bg-primary/10 blur-xl" />
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4 sm:gap-5">
+                {Array.from({ length: 12 }).map((_, i) => (
+                  <Skeleton key={i} className="aspect-[2/3]" />
+                ))}
+              </div>
+            ) : loadError ? (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center mb-4">
+                  <X className="w-8 h-8 text-destructive" />
                 </div>
-                <p className="text-muted-foreground mt-4 text-sm">Loading anime...</p>
+                <h3 className="font-display font-semibold text-lg mb-1">Something went wrong</h3>
+                <p className="text-muted-foreground text-sm mb-4">{loadError}</p>
+                <Button variant="outline" size="sm" onClick={loadAnimeData}>
+                  <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                  Retry
+                </Button>
               </div>
             ) : animeList.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-center">
-                <div className="w-16 h-16 rounded-2xl bg-muted/50 flex items-center justify-center mb-4">
+                <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center mb-4">
                   <X className="w-8 h-8 text-muted-foreground/50" />
                 </div>
                 <h3 className="font-display font-semibold text-lg mb-1">No anime found</h3>
-                <p className="text-muted-foreground text-sm">Try adjusting your filters</p>
+                <p className="text-muted-foreground text-sm">
+                  {searchQuery ? `No titles matching “${searchQuery}”` : 'Try adjusting your filters'}
+                </p>
               </div>
             ) : (
               <>
@@ -615,7 +547,6 @@ export default function Home() {
                       size="sm"
                       disabled={currentPage === 1}
                       onClick={() => setCurrentPage(p => p - 1)}
-                      className="glass-subtle border-white/5"
                     >
                       <ChevronLeft className="w-4 h-4 mr-1" />
                       Previous
@@ -628,7 +559,6 @@ export default function Home() {
                       size="sm"
                       disabled={currentPage === totalPages}
                       onClick={() => setCurrentPage(p => p + 1)}
-                      className="glass-subtle border-white/5"
                     >
                       Next
                       <ChevronRight className="w-4 h-4 ml-1" />
@@ -639,115 +569,130 @@ export default function Home() {
             )}
           </div>
         </main>
-      ) : (
-        /* Chat Tab */
-        <>
-          <main className="flex-1 overflow-y-auto">
-            <div className="container mx-auto px-4 py-6 max-w-3xl">
-              {messages.length === 0 ? (
-                <div className="text-center py-16 animate-fade-in">
-                  <div className="relative inline-block mb-6">
-                    <div className="w-20 h-20 rounded-2xl bg-primary/10 flex items-center justify-center">
-                      <Sparkles className="w-10 h-10 text-primary" />
-                    </div>
-                    <div className="absolute -inset-4 bg-primary/10 rounded-3xl blur-2xl -z-10" />
-                  </div>
+      )}
 
-                  <h2 className="font-display text-2xl sm:text-3xl font-bold mb-3">
-                    Ask me about <span className="text-gradient">anime</span>
-                  </h2>
-                  <p className="text-muted-foreground mb-8 max-w-md mx-auto">
-                    I can help with schedules, recommendations, episode info, and more
-                  </p>
-
-                  <div className="flex flex-wrap justify-center gap-2 max-w-xl mx-auto">
-                    {EXAMPLE_QUERIES.map((query, i) => (
-                      <button
-                        key={i}
-                        onClick={() => sendQuery(query)}
-                        disabled={loading || apiStatus === 'offline'}
-                        className="glass-subtle px-4 py-2.5 rounded-xl text-sm text-muted-foreground hover:text-foreground hover:bg-white/5 transition-all duration-200 disabled:opacity-50"
-                        style={{ animationDelay: `${i * 50}ms` }}
-                      >
-                        {query}
-                      </button>
-                    ))}
+      {/* Anime Detail Dialog */}
+      <Dialog open={detailAnime !== null} onOpenChange={(open) => { if (!open) setDetailAnime(null) }}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto p-0">
+          {detailAnime && (
+            <div>
+              <div className="flex flex-col sm:flex-row gap-5 p-6">
+                {/* Cover */}
+                <div className="shrink-0 mx-auto sm:mx-0">
+                  <div className="relative w-40 aspect-[2/3] rounded-lg overflow-hidden border border-border">
+                    {detailAnime.cover_image ? (
+                      <Image
+                        src={detailAnime.cover_image}
+                        alt={detailAnime.title}
+                        fill
+                        sizes="160px"
+                        className="object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center bg-muted">
+                        <Sparkles className="w-8 h-8 text-muted-foreground/30" />
+                      </div>
+                    )}
                   </div>
                 </div>
-              ) : (
-                <div className="space-y-4">
-                  {messages.map((msg, i) => (
-                    <div
-                      key={i}
-                      className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} animate-fade-in`}
-                    >
-                      <div className={`max-w-[85%] px-4 py-3 ${
-                        msg.role === 'user'
-                          ? 'chat-bubble-user'
-                          : 'chat-bubble-assistant'
+
+                {/* Info */}
+                <div className="flex-1 min-w-0 space-y-3">
+                  <div>
+                    <DialogTitle className="pr-8">{detailAnime.title}</DialogTitle>
+                    {detailAnime.romaji_title && detailAnime.romaji_title !== detailAnime.title && (
+                      <p className="text-sm text-muted-foreground mt-0.5">{detailAnime.romaji_title}</p>
+                    )}
+                  </div>
+
+                  {/* Meta chips */}
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    {detailAnime.status && (
+                      <span className={`px-2.5 py-1 rounded-lg font-semibold uppercase tracking-wide ${
+                        detailAnime.status === 'FINISHED' ? 'status-finished' :
+                        detailAnime.status === 'RELEASING' ? 'status-airing' :
+                        'status-upcoming'
                       }`}>
-                        <div className="text-sm space-y-1.5 leading-relaxed">
-                          {msg.role === 'user' ? msg.content : parseMarkdown(msg.content)}
-                        </div>
-                      </div>
+                        {detailAnime.status === 'FINISHED' ? 'Finished' :
+                         detailAnime.status === 'RELEASING' ? 'Airing' :
+                         'Upcoming'}
+                      </span>
+                    )}
+                    {detailAnime.score ? (
+                      <span className="px-2.5 py-1 rounded-lg bg-secondary border border-border flex items-center gap-1">
+                        <Star className="w-3 h-3 text-amber-400 fill-amber-400" />
+                        {detailAnime.score}%
+                      </span>
+                    ) : null}
+                    {detailAnime.episodes ? (
+                      <span className="px-2.5 py-1 rounded-lg bg-secondary border border-border">
+                        {detailAnime.episodes} episodes
+                      </span>
+                    ) : null}
+                    {detailAnime.season && detailAnime.season_year ? (
+                      <span className="px-2.5 py-1 rounded-lg bg-secondary border border-border capitalize">
+                        {detailAnime.season.toLowerCase()} {detailAnime.season_year}
+                      </span>
+                    ) : null}
+                    {detailAnime.is_adult && (
+                      <span className="px-2.5 py-1 rounded-lg bg-red-700 text-white font-bold">
+                        18+
+                      </span>
+                    )}
+                  </div>
 
-                      {/* Anime cards in chat */}
-                      {msg.anime && msg.anime.length > 0 && (
-                        <div className="flex gap-3 mt-3 overflow-x-auto max-w-full pb-2 hide-scrollbar">
-                          {msg.anime
-                            .filter((anime) => anime.cover_image)
-                            .slice(0, 8)
-                            .map((anime, index) => (
-                              <div key={anime.anime_id} className="flex-shrink-0 w-36">
-                                <AnimeCard anime={anime as Anime} index={index} />
-                              </div>
-                            ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-
-                  {loading && (
-                    <div className="flex justify-start animate-fade-in">
-                      <div className="chat-bubble-assistant px-5 py-4">
-                        <div className="flex gap-1.5">
-                          <span className="loading-dot" />
-                          <span className="loading-dot" />
-                          <span className="loading-dot" />
-                        </div>
-                      </div>
+                  {/* Genres */}
+                  {detailAnime.genres && detailAnime.genres.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {detailAnime.genres.map((genre, i) => (
+                        <span key={i} className="px-2 py-0.5 text-[11px] font-medium text-primary bg-primary/10 rounded-full">
+                          {genre}
+                        </span>
+                      ))}
                     </div>
                   )}
-                  <div ref={messagesEndRef} />
+
+                  {/* Studios + dates */}
+                  <div className="text-sm text-muted-foreground space-y-1">
+                    {detailAnime.studios && detailAnime.studios.length > 0 && (
+                      <p><span className="text-foreground font-medium">Studio:</span> {detailAnime.studios.join(', ')}</p>
+                    )}
+                    {detailAnime.start_date && (
+                      <p><span className="text-foreground font-medium">Started:</span> {formatDate(detailAnime.start_date)}</p>
+                    )}
+                    {detailAnime.predicted_completion && detailAnime.status !== 'FINISHED' && (
+                      <p><span className="text-foreground font-medium">Ends:</span> {formatDate(detailAnime.predicted_completion)}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Synopsis */}
+              {detailAnime.synopsis && (
+                <div className="px-6 pb-4">
+                  <p className="text-sm text-muted-foreground leading-relaxed line-clamp-[8]">
+                    {stripHtml(detailAnime.synopsis)}
+                  </p>
                 </div>
               )}
-            </div>
-          </main>
 
-          {/* Chat Input */}
-          <footer className="border-t border-white/5 bg-background/80 backdrop-blur-xl">
-            <div className="container mx-auto px-4 py-4 max-w-3xl">
-              <form onSubmit={handleSubmit} className="chat-input flex gap-3 p-2">
-                <input
-                  type="text"
-                  value={input}
-                  onChange={e => setInput(e.target.value)}
-                  placeholder="Ask about anime schedules, recommendations..."
-                  disabled={loading || apiStatus === 'offline'}
-                  className="flex-1 bg-transparent px-4 py-3 text-sm placeholder:text-muted-foreground focus:outline-none disabled:opacity-50"
-                />
-                <Button
-                  type="submit"
-                  disabled={loading || !input.trim() || apiStatus === 'offline'}
-                  className="btn-glow px-6"
+              {/* Footer */}
+              <div className="px-6 py-4 border-t border-border flex justify-end">
+                <a
+                  href={detailAnime.site_url || `https://anilist.co/anime/${detailAnime.anime_id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
                 >
-                  <Send className="w-4 h-4" />
-                </Button>
-              </form>
+                  <Button variant="outline" size="sm">
+                    View on AniList
+                    <ExternalLink className="w-3.5 h-3.5 ml-1.5" />
+                  </Button>
+                </a>
+              </div>
             </div>
-          </footer>
-        </>
-      )}
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

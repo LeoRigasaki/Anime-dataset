@@ -203,6 +203,7 @@ async def get_weekly_airing_schedule(start_timestamp: int, end_timestamp: int, p
             averageScore
             genres
             format
+            isAdult
             studios(isMain: true) {
               nodes {
                 name
@@ -291,6 +292,7 @@ async def get_weekly_airing_schedule(start_timestamp: int, end_timestamp: int, p
                     "score": media.get("averageScore"),
                     "genres": media.get("genres", []),
                     "format": media.get("format"),
+                    "is_adult": bool(media.get("isAdult")),
                     "studios": studios,
                     "airs_in_human": _format_countdown(schedule["timeUntilAiring"])
                 })

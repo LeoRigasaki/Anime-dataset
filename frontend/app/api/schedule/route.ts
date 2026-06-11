@@ -59,6 +59,7 @@ export async function GET(request: NextRequest) {
 
   const start = parseDate(searchParams.get('start')) ?? defaultStart
   const end = parseDate(searchParams.get('end')) ?? defaultEnd
+  const includeAdult = searchParams.get('adult') === 'true'
 
   if (end <= start) {
     return NextResponse.json({ error: 'end must be after start' }, { status: 400 })
@@ -75,13 +76,19 @@ export async function GET(request: NextRequest) {
     let pageError: { message: string } | null = null
 
     for (let from = 0; ; from += PAGE_SIZE) {
-      const result = await supabase
+      let pageQuery = supabase
         .from(tableName)
         .select('id, schedule_id, anime_id, episode, airing_at, title, cover_image, score, total_episodes, anime_status')
         .gte('airing_at', start.toISOString())
         .lt('airing_at', end.toISOString())
         .order('airing_at')
         .range(from, from + PAGE_SIZE - 1)
+
+      if (!includeAdult) {
+        pageQuery = pageQuery.not('is_adult', 'is', true)
+      }
+
+      const result = await pageQuery
 
       if (result.error) {
         pageError = result.error
