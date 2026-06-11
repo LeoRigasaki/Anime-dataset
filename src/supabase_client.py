@@ -353,12 +353,45 @@ class SupabaseClient:
             print(f"Error upserting schedule: {e}")
             return None
 
+    def upsert_schedule_batch(
+        self,
+        schedule_list: List[Dict[str, Any]],
+        batch_size: int = 200,
+        version_id: Optional[int] = None
+    ) -> int:
+        """
+        Batch upsert airing schedule entries (denormalized rows).
+        Returns count of successfully upserted records.
+        """
+        total_upserted = 0
+        resolved_version_id = self._resolve_dataset_version_id(version_id)
+        on_conflict = (
+            'dataset_version_id,anime_id,episode'
+            if self.supports_dataset_versioning() else 'anime_id,episode'
+        )
+
+        for i in range(0, len(schedule_list), batch_size):
+            batch = []
+            for item in schedule_list[i:i + batch_size]:
+                row = dict(item)
+                if self.supports_dataset_versioning() and resolved_version_id is not None:
+                    row['dataset_version_id'] = resolved_version_id
+                batch.append(row)
+
+            result = self.client.table('airing_schedule').upsert(
+                batch,
+                on_conflict=on_conflict
+            ).execute()
+            total_upserted += len(result.data) if result.data else 0
+
+        return total_upserted
+
     def get_schedule_for_date(self, date: datetime) -> List[Dict]:
         """Get all episodes airing on a specific date"""
         start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0)
         end_of_day = date.replace(hour=23, minute=59, second=59, microsecond=999999)
 
-        query = self.client.table('airing_schedule').select('*, animes(*)')
+        query = self.client.table('airing_schedule').select('*')
         query = self._apply_dataset_version_filter(query)
         result = query.gte('airing_at', start_of_day.isoformat())\
             .lte('airing_at', end_of_day.isoformat())\
@@ -372,7 +405,7 @@ class SupabaseClient:
         from datetime import timedelta
         end_date = start_date + timedelta(days=7)
 
-        query = self.client.table('airing_schedule').select('*, animes(*)')
+        query = self.client.table('airing_schedule').select('*')
         query = self._apply_dataset_version_filter(query)
         result = query.gte('airing_at', start_date.isoformat())\
             .lt('airing_at', end_date.isoformat())\

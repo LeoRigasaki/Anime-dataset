@@ -170,19 +170,18 @@ def get_weekly_schedule_supabase(weeks_offset: int = 0) -> Dict[str, Any]:
         airing_at = datetime.fromisoformat(item['airing_at'].replace('Z', '+00:00'))
         day_name = airing_at.strftime('%A').upper()
 
-        anime = item.get('animes', {})
         schedule_item = {
-            'schedule_id': item.get('id'),
+            'schedule_id': item.get('schedule_id') or item.get('id'),
             'anime_id': item.get('anime_id'),
-            'title': anime.get('title', 'Unknown'),
+            'title': item.get('title') or 'Unknown',
             'episode': item.get('episode'),
             'airing_at': int(airing_at.timestamp()),
             'airing_time': airing_at.strftime('%I:%M %p'),
             'airing_date': airing_at.strftime('%Y-%m-%d'),
-            'cover_image': anime.get('cover_image_large'),
-            'status': anime.get('status'),
-            'total_episodes': anime.get('episodes'),
-            'score': anime.get('score'),
+            'cover_image': item.get('cover_image'),
+            'status': item.get('anime_status'),
+            'total_episodes': item.get('total_episodes'),
+            'score': item.get('score'),
             'time_until_airing': int((airing_at - datetime.now(timezone.utc)).total_seconds()),
             'airing_status': _get_airing_status(airing_at),
             'airs_in_human': _format_time_until(airing_at)

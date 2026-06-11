@@ -17,7 +17,7 @@ import os
 import sys
 import glob
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any
 
 import pandas as pd
@@ -93,6 +93,63 @@ def filter_records_by_window(
     return filtered, archived_count
 
 
+def fetch_airing_schedule_items(
+    weeks_back: int = 2,
+    weeks_forward: int = 6,
+) -> List[Dict[str, Any]]:
+    """
+    Fetch the airing schedule from AniList for a rolling window around today
+    and shape rows for the airing_schedule table. Fetched week-by-week because
+    get_weekly_airing_schedule caps pagination per call.
+    """
+    import asyncio
+    from src.anilist_client import get_weekly_airing_schedule
+
+    now = datetime.utcnow()
+    week_start = now - timedelta(days=now.weekday(), hours=now.hour,
+                                 minutes=now.minute, seconds=now.second,
+                                 microseconds=now.microsecond)
+
+    async def fetch_all() -> List[Dict[str, Any]]:
+        items: List[Dict[str, Any]] = []
+        for offset in range(-weeks_back, weeks_forward):
+            start = week_start + timedelta(weeks=offset)
+            end = start + timedelta(days=7)
+            week_items = await get_weekly_airing_schedule(
+                int(start.timestamp()), int(end.timestamp())
+            )
+            items.extend(week_items)
+        return items
+
+    raw_items = asyncio.run(fetch_all())
+
+    rows: List[Dict[str, Any]] = []
+    seen: set[tuple[int, int]] = set()
+    for item in raw_items:
+        anime_id = item.get('anime_id')
+        episode = item.get('episode')
+        airing_at = item.get('airing_at')
+        if not anime_id or episode is None or not airing_at:
+            continue
+        key = (anime_id, episode)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({
+            'schedule_id': item.get('schedule_id'),
+            'anime_id': anime_id,
+            'episode': episode,
+            'airing_at': datetime.fromtimestamp(airing_at, tz=timezone.utc).isoformat(),
+            'time_until_airing': item.get('time_until_airing'),
+            'title': item.get('title'),
+            'cover_image': item.get('cover_image'),
+            'score': item.get('score'),
+            'total_episodes': item.get('total_episodes'),
+            'anime_status': item.get('status'),
+        })
+    return rows
+
+
 def build_version_name(csv_source: str | None) -> str:
     """Create a unique dataset version name for each sync attempt."""
     timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
@@ -109,6 +166,7 @@ def sync_from_data(
     csv_source: str = None,
     window_start_year: int = DEFAULT_WINDOW_START_YEAR,
     window_end_year: int = DEFAULT_WINDOW_END_YEAR,
+    include_schedule: bool = True,
 ) -> Dict[str, Any]:
     """
     Sync a list of anime dicts to Supabase.
@@ -121,6 +179,7 @@ def sync_from_data(
         'window_records': 0,
         'archived_records': 0,
         'records_synced': 0,
+        'schedule_synced': 0,
         'new_records': 0,
         'updated_records': 0,
         'errors': [],
@@ -209,6 +268,20 @@ def sync_from_data(
                     "refusing to activate incomplete dataset version"
                 )
 
+            if include_schedule:
+                print("  Fetching airing schedule from AniList...")
+                schedule_rows = fetch_airing_schedule_items()
+                if not schedule_rows:
+                    raise RuntimeError(
+                        "AniList returned no airing schedule items; "
+                        "refusing to activate a version with an empty schedule"
+                    )
+                schedule_synced = client.upsert_schedule_batch(
+                    schedule_rows, version_id=version_id
+                )
+                result['schedule_synced'] = schedule_synced
+                print(f"  Airing schedule: {schedule_synced} episodes synced")
+
             if version_id is not None:
                 client.activate_dataset_version(
                     version_id,
@@ -223,8 +296,8 @@ def sync_from_data(
             client.complete_sync_log(
                 log_id,
                 records_processed=len(filtered_data),
-                records_inserted=synced,
-                records_updated=0,
+                records_inserted=new_count,
+                records_updated=updated_count,
                 new_records=new_count,
                 updated_records=updated_count,
                 details=details
@@ -253,6 +326,7 @@ def sync_from_csv(
     dry_run: bool = False,
     window_start_year: int = DEFAULT_WINDOW_START_YEAR,
     window_end_year: int = DEFAULT_WINDOW_END_YEAR,
+    include_schedule: bool = True,
 ) -> Dict[str, Any]:
     """Load CSV and sync to Supabase."""
     if not os.path.exists(csv_path):
@@ -270,6 +344,7 @@ def sync_from_csv(
         csv_source=csv_name,
         window_start_year=window_start_year,
         window_end_year=window_end_year,
+        include_schedule=include_schedule,
     )
 
 
@@ -281,6 +356,8 @@ def main():
                         help='Glob pattern for CSV files (used with --csv-dir)')
     parser.add_argument('--batch-size', type=int, default=100)
     parser.add_argument('--dry-run', action='store_true', help='Validate without writing')
+    parser.add_argument('--skip-schedule', action='store_true',
+                        help='Skip syncing the AniList airing schedule')
     parser.add_argument('--window-start-year', type=int, default=DEFAULT_WINDOW_START_YEAR)
     parser.add_argument('--window-end-year', type=int, default=DEFAULT_WINDOW_END_YEAR)
 
@@ -293,12 +370,14 @@ def main():
             args.dry_run,
             window_start_year=args.window_start_year,
             window_end_year=args.window_end_year,
+            include_schedule=not args.skip_schedule,
         )
         print(f"\nSync Summary:")
         print(f"  Total records: {result['total_records']}")
         print(f"  Featured window records: {result.get('window_records', 0)}")
         print(f"  Archived outside window: {result.get('archived_records', 0)}")
         print(f"  Records synced: {result['records_synced']}")
+        print(f"  Schedule episodes synced: {result.get('schedule_synced', 0)}")
         print(f"  New anime: {result.get('new_records', 0)}")
         print(f"  Updated anime: {result.get('updated_records', 0)}")
         if result.get('dataset_version'):
@@ -326,6 +405,7 @@ def main():
                 args.dry_run,
                 window_start_year=args.window_start_year,
                 window_end_year=args.window_end_year,
+                include_schedule=not args.skip_schedule,
             )
             total_synced += result['records_synced']
             total_errors.extend(result['errors'])
