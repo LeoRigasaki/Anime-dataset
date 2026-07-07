@@ -2,14 +2,14 @@ Anime Data Coverage Report
 ========================
 
 Overall Statistics:
-Total anime entries: 272
-Date range: 2024-01-03 to 2026-08-28
+Total anime entries: 884
+Date range: 2024-12-06 to 2026-12-11
 
 Anime Count by Year:
 ------------------
-Year 2024: 100 anime
-Year 2025: 100 anime
-Year 2026: 72 anime
+Year 2024: 4 anime
+Year 2025: 481 anime
+Year 2026: 399 anime
 
 Missing or Zero Count Years:
 -------------------------
@@ -67,10 +67,10 @@ Year 2020: No data found
 Year 2021: No data found
 Year 2022: No data found
 Year 2023: No data found
-Year 2026: Only 72 anime (possibly incomplete)
+Year 2024: Only 4 anime (possibly incomplete)
 
 Current Data File:
 ----------------
-Filename: jikan_seasonal_20260707.csv
+Filename: anilist_seasonal_20260707.csv
 File date: 20260707
-File size: 354103 bytes
+File size: 1256104 bytes
