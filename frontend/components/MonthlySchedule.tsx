@@ -231,9 +231,12 @@ export default function MonthlySchedule({
 
   const totalEpisodes = useMemo(() => {
     let count = 0
-    scheduleData.forEach(items => count += items.length)
+    const monthPrefix = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-`
+    scheduleData.forEach((items, dateKey) => {
+      if (dateKey.startsWith(monthPrefix)) count += items.length
+    })
     return count
-  }, [scheduleData])
+  }, [scheduleData, currentDate])
 
   // Premium Loading Skeleton
   const LoadingSkeleton = () => (
@@ -343,8 +346,7 @@ export default function MonthlySchedule({
             <div className="surface-card p-4 sm:p-6">
               {totalEpisodes === 0 && (
                 <div className="mb-4 px-4 py-3 rounded-lg bg-secondary border border-border text-sm text-muted-foreground">
-                  No episode data for this month — the schedule covers a rolling window of about
-                  two weeks back and six weeks ahead, refreshed daily.
+                  No episode data for this month — AniList has not published dated episodes for it yet.
                 </div>
               )}
               {/* Day Headers */}

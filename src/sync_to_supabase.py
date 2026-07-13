@@ -95,30 +95,54 @@ def filter_records_by_window(
 
 def fetch_airing_schedule_items(
     weeks_back: int = 2,
-    weeks_forward: int = 6,
+    through_year: int = DEFAULT_WINDOW_END_YEAR,
 ) -> List[Dict[str, Any]]:
     """
-    Fetch the airing schedule from AniList for a rolling window around today
-    and shape rows for the airing_schedule table. Fetched week-by-week because
-    get_weekly_airing_schedule caps pagination per call.
+    Fetch every dated airing schedule AniList currently knows through the end
+    of the configured dataset window and shape rows for Supabase.
+
+    Requests are split by calendar month so each result set stays manageable
+    while still fetching every page AniList reports for that range.
     """
     import asyncio
     from src.anilist_client import get_weekly_airing_schedule
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     week_start = now - timedelta(days=now.weekday(), hours=now.hour,
                                  minutes=now.minute, seconds=now.second,
                                  microseconds=now.microsecond)
+    range_start = week_start - timedelta(weeks=weeks_back)
+    range_end = datetime(through_year + 1, 1, 1, tzinfo=timezone.utc)
+
+    if range_end <= range_start:
+        range_end = datetime(range_start.year + 1, 1, 1, tzinfo=timezone.utc)
+
+    ranges: List[tuple[datetime, datetime]] = []
+    cursor = range_start
+    while cursor < range_end:
+        if cursor.month == 12:
+            next_month = datetime(cursor.year + 1, 1, 1, tzinfo=timezone.utc)
+        else:
+            next_month = datetime(cursor.year, cursor.month + 1, 1, tzinfo=timezone.utc)
+        chunk_end = min(next_month, range_end)
+        ranges.append((cursor, chunk_end))
+        cursor = chunk_end
 
     async def fetch_all() -> List[Dict[str, Any]]:
         items: List[Dict[str, Any]] = []
-        for offset in range(-weeks_back, weeks_forward):
-            start = week_start + timedelta(weeks=offset)
-            end = start + timedelta(days=7)
-            week_items = await get_weekly_airing_schedule(
-                int(start.timestamp()), int(end.timestamp())
+        for index, (start, end) in enumerate(ranges, start=1):
+            print(
+                f"  Schedule range {index}/{len(ranges)}: "
+                f"{start.date()} to {end.date()}"
             )
-            items.extend(week_items)
+            range_items = await get_weekly_airing_schedule(
+                # AniList's `airingAt_greater` filter is strict. Subtract one
+                # second so an episode exactly at a month boundary is included.
+                int(start.timestamp()) - 1,
+                int(end.timestamp()),
+                max_pages=100,
+            )
+            items.extend(range_items)
         return items
 
     raw_items = asyncio.run(fetch_all())
@@ -271,7 +295,9 @@ def sync_from_data(
 
             if include_schedule:
                 print("  Fetching airing schedule from AniList...")
-                schedule_rows = fetch_airing_schedule_items()
+                schedule_rows = fetch_airing_schedule_items(
+                    through_year=window_end_year
+                )
                 if not schedule_rows:
                     raise RuntimeError(
                         "AniList returned no airing schedule items; "
@@ -293,6 +319,10 @@ def sync_from_data(
                         'csv_source': csv_source,
                     }
                 )
+                if include_schedule:
+                    pruned_rows = client.prune_archived_schedule_versions(version_id)
+                    if pruned_rows:
+                        print(f"  Removed {pruned_rows} archived schedule rows")
 
             client.complete_sync_log(
                 log_id,

@@ -386,6 +386,22 @@ class SupabaseClient:
 
         return total_upserted
 
+    def prune_archived_schedule_versions(self, active_version_id: int) -> int:
+        """Delete schedule rows hidden behind archived dataset versions."""
+        if not self.supports_dataset_versioning():
+            return 0
+
+        try:
+            result = self.client.table('airing_schedule').delete()\
+                .neq('dataset_version_id', active_version_id)\
+                .execute()
+            return len(result.data) if result.data else 0
+        except Exception as e:
+            # The new version is already active, so cleanup must never turn a
+            # successful sync into a failed dataset activation.
+            print(f"Warning: Could not prune archived schedule rows: {e}")
+            return 0
+
     def get_schedule_for_date(self, date: datetime) -> List[Dict]:
         """Get all episodes airing on a specific date"""
         start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0)

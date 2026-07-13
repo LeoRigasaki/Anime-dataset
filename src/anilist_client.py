@@ -13,7 +13,7 @@ _last_request_time = 0
 _MIN_REQUEST_INTERVAL = 1.0  # ~60 requests/min max (more conservative)
 
 # Simple in-memory cache for schedule data
-_schedule_cache: dict[tuple[int, int], tuple[float, list[dict]]] = {}
+_schedule_cache: dict[tuple[int, int, int, Optional[int]], tuple[float, list[dict]]] = {}
 _CACHE_TTL = 300  # 5 minutes cache
 
 
@@ -141,7 +141,12 @@ async def get_anime_by_id(anime_id: int) -> Optional[dict]:
             return {"error": str(e)}
 
 
-async def get_weekly_airing_schedule(start_timestamp: int, end_timestamp: int, per_page: int = 50) -> list[dict]:
+async def get_weekly_airing_schedule(
+    start_timestamp: int,
+    end_timestamp: int,
+    per_page: int = 50,
+    max_pages: Optional[int] = 5,
+) -> list[dict]:
     """
     Get all anime episodes airing in a specific time range (AniChart-style).
     Fetches all pages to ensure no episodes are missed.
@@ -151,12 +156,14 @@ async def get_weekly_airing_schedule(start_timestamp: int, end_timestamp: int, p
         start_timestamp: Start of time range (Unix timestamp)
         end_timestamp: End of time range (Unix timestamp)
         per_page: Number of results per page (max 50 for stability)
+        max_pages: Optional safety cap. Use ``None`` to fetch every page in
+            the requested range.
 
     Returns:
         List of airing schedule items with media details
     """
     # Check cache first
-    cache_key = (start_timestamp, end_timestamp)
+    cache_key = (start_timestamp, end_timestamp, per_page, max_pages)
     if cache_key in _schedule_cache:
         cached_time, cached_data = _schedule_cache[cache_key]
         if time.time() - cached_time < _CACHE_TTL:
@@ -217,11 +224,10 @@ async def get_weekly_airing_schedule(start_timestamp: int, end_timestamp: int, p
 
     all_results = []
     page = 1
-    max_pages = 5  # Reduced from 10 - most weeks have < 250 episodes
-    max_retries = 3
+    max_retries = 5
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        while page <= max_pages:
+        while max_pages is None or page <= max_pages:
             variables = {
                 "startTime": start_timestamp,
                 "endTime": end_timestamp,
@@ -239,7 +245,12 @@ async def get_weekly_airing_schedule(start_timestamp: int, end_timestamp: int, p
 
                     # Handle rate limiting (429)
                     if response.status_code == 429:
-                        wait_time = 2 ** (retry + 1)  # 2, 4, 8 seconds
+                        retry_after = response.headers.get("Retry-After")
+                        try:
+                            retry_after_seconds = int(float(retry_after or 0)) + 1
+                        except (TypeError, ValueError):
+                            retry_after_seconds = 0
+                        wait_time = max(2 ** (retry + 1), retry_after_seconds)
                         print(f"Rate limited, waiting {wait_time}s before retry...")
                         await asyncio.sleep(wait_time)
                         continue
@@ -258,16 +269,17 @@ async def get_weekly_airing_schedule(start_timestamp: int, end_timestamp: int, p
 
                     break  # Success, exit retry loop
 
-                except httpx.HTTPStatusError as e:
+                except (httpx.HTTPStatusError, httpx.RequestError):
                     if retry < max_retries - 1:
                         wait_time = 2 ** (retry + 1)
                         await asyncio.sleep(wait_time)
                         continue
-                    raise e
+                    raise
             else:
-                # All retries exhausted
-                print(f"Failed to fetch page {page} after {max_retries} retries")
-                break
+                raise RuntimeError(
+                    f"Failed to fetch AniList schedule page {page} after "
+                    f"{max_retries} retries"
+                )
 
             page_data = data["data"]["Page"]
             schedules = page_data["airingSchedules"]
@@ -300,6 +312,13 @@ async def get_weekly_airing_schedule(start_timestamp: int, end_timestamp: int, p
             # Check if there are more pages
             if not page_info.get("hasNextPage"):
                 break
+
+            if max_pages is not None and page >= max_pages:
+                raise RuntimeError(
+                    f"AniList schedule needs more than {max_pages} pages for "
+                    f"{start_timestamp}-{end_timestamp}; refusing to return "
+                    "an incomplete schedule"
+                )
 
             page += 1
 
