@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import Image from 'next/image'
 import { Button } from '@/components/ui/button'
+import ScheduleEntryCard from '@/components/ScheduleEntryCard'
 import {
   Select,
   SelectContent,
@@ -11,23 +11,29 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { FEATURED_END_YEAR, FEATURED_START_YEAR } from '@/lib/dataset-window'
-import { Calendar, Clock, ChevronLeft, ChevronRight, X, Loader2, Sparkles, Star, Trophy } from 'lucide-react'
-
-interface ScheduleItem {
-  schedule_id: number
-  airing_at: number
-  episode: number
-  anime_id: number
-  title: string
-  cover_image: string
-  status: string
-  total_episodes: number | null
-  score: number
-  airs_in_human: string
-  airing_status: 'aired' | 'airing_soon' | 'airing_today' | 'upcoming'
-  airing_time: string
-  airing_date: string
-}
+import {
+  ScheduleFilter,
+  ScheduleItem,
+  ScheduleView,
+  isFinale,
+  isPremiere,
+  matchesScheduleFilter,
+} from '@/lib/schedule'
+import {
+  Calendar,
+  CalendarDays,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Info,
+  List,
+  Loader2,
+  Share2,
+  Sparkles,
+  Trophy,
+  X,
+} from 'lucide-react'
 
 interface MonthlyScheduleProps {
   initialDate?: Date
@@ -43,6 +49,46 @@ const YEAR_OPTIONS = Array.from(
   { length: FEATURED_END_YEAR - FEATURED_START_YEAR + 1 },
   (_, index) => FEATURED_START_YEAR + index
 )
+
+interface ScheduleQueryState {
+  date: Date | null
+  selectedDate: string | null
+  filter: ScheduleFilter
+  view: ScheduleView
+}
+
+function readScheduleQueryState(): ScheduleQueryState {
+  const fallback: ScheduleQueryState = {
+    date: null,
+    selectedDate: null,
+    filter: 'all',
+    view: 'calendar',
+  }
+
+  if (typeof window === 'undefined') return fallback
+
+  const params = new URLSearchParams(window.location.search)
+  const monthMatch = params.get('month')?.match(/^(\d{4})-(\d{2})$/)
+  const year = monthMatch ? Number(monthMatch[1]) : null
+  const month = monthMatch ? Number(monthMatch[2]) : null
+  const date = year !== null && month !== null &&
+    year >= FEATURED_START_YEAR && year <= FEATURED_END_YEAR &&
+    month >= 1 && month <= 12
+      ? new Date(year, month - 1, 1)
+      : null
+
+  const selectedDateParam = params.get('date')
+  const selectedDate = selectedDateParam && /^\d{4}-\d{2}-\d{2}$/.test(selectedDateParam)
+    ? selectedDateParam
+    : null
+  const filterParam = params.get('filter')
+  const filter: ScheduleFilter = filterParam === 'premieres' || filterParam === 'finales'
+    ? filterParam
+    : 'all'
+  const view: ScheduleView = params.get('mode') === 'agenda' ? 'agenda' : 'calendar'
+
+  return { date, selectedDate, filter, view }
+}
 
 export default function MonthlySchedule({
   initialDate,
@@ -72,13 +118,19 @@ export default function MonthlySchedule({
   const rangeCache = useRef<Map<string, Map<string, ScheduleItem[]>>>(new Map())
   const skipDefaultSelectionRef = useRef(false)
   const loadRequestIdRef = useRef(0)
+  const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const [queryState] = useState(readScheduleQueryState)
   const todayKey = formatLocalDateKey(new Date())
-  const [currentDate, setCurrentDate] = useState(initialDate || new Date())
+  const [currentDate, setCurrentDate] = useState(queryState.date || initialDate || new Date())
   const [selectedDate, setSelectedDate] = useState<string | null>(
-    initialSelectedDate !== undefined ? initialSelectedDate : todayKey
+    queryState.selectedDate || (initialSelectedDate !== undefined ? initialSelectedDate : todayKey)
   )
   const [selectedAnime, setSelectedAnime] = useState<ScheduleItem[]>([])
+  const [scheduleFilter, setScheduleFilter] = useState<ScheduleFilter>(queryState.filter)
+  const [viewMode, setViewMode] = useState<ScheduleView>(queryState.view)
+  const [linkCopied, setLinkCopied] = useState(false)
+  const [shareFallbackUrl, setShareFallbackUrl] = useState<string | null>(null)
 
   const calendarDays = useMemo(() => {
     const year = currentDate.getFullYear()
@@ -116,7 +168,26 @@ export default function MonthlySchedule({
 
   useEffect(() => {
     onStateChange?.(currentDate, selectedDate)
-  }, [currentDate, selectedDate, onStateChange])
+
+    const url = new URL(window.location.href)
+    url.searchParams.set('view', 'schedule')
+    url.searchParams.set(
+      'month',
+      `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`
+    )
+    if (selectedDate) url.searchParams.set('date', selectedDate)
+    else url.searchParams.delete('date')
+    if (scheduleFilter === 'all') url.searchParams.delete('filter')
+    else url.searchParams.set('filter', scheduleFilter)
+    if (viewMode === 'calendar') url.searchParams.delete('mode')
+    else url.searchParams.set('mode', viewMode)
+
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+  }, [currentDate, selectedDate, scheduleFilter, viewMode, onStateChange])
+
+  useEffect(() => () => {
+    if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current)
+  }, [])
 
   const loadMonthSchedule = async () => {
     const requestId = ++loadRequestIdRef.current
@@ -177,6 +248,12 @@ export default function MonthlySchedule({
 
   const applyDefaultSelection = (newScheduleData: Map<string, ScheduleItem[]>) => {
     {
+      if (viewMode === 'agenda') {
+        setSelectedDate(null)
+        setSelectedAnime([])
+        return
+      }
+
       if (skipDefaultSelectionRef.current) {
         skipDefaultSelectionRef.current = false
         setSelectedDate(null)
@@ -270,6 +347,58 @@ export default function MonthlySchedule({
     setSelectedAnime(anime)
   }
 
+  const changeViewMode = (nextView: ScheduleView) => {
+    setViewMode(nextView)
+    if (nextView === 'agenda') setSelectedDate(null)
+  }
+
+  const openMonthlyHighlights = (filter: Exclude<ScheduleFilter, 'all'>) => {
+    setScheduleFilter(filter)
+    setViewMode('agenda')
+    setSelectedDate(null)
+  }
+
+  const copyScheduleLink = async () => {
+    const scheduleUrl = window.location.href
+    let copied = false
+
+    try {
+      await Promise.race([
+        navigator.clipboard.writeText(scheduleUrl),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('Clipboard request timed out')), 600)
+        }),
+      ])
+      copied = true
+    } catch {
+      let temporaryInput: HTMLTextAreaElement | null = null
+      try {
+        temporaryInput = document.createElement('textarea')
+        temporaryInput.value = scheduleUrl
+        temporaryInput.setAttribute('readonly', '')
+        temporaryInput.style.position = 'fixed'
+        temporaryInput.style.opacity = '0'
+        document.body.appendChild(temporaryInput)
+        temporaryInput.select()
+        copied = document.execCommand('copy')
+      } catch {
+        copied = false
+      } finally {
+        if (temporaryInput?.isConnected) document.body.removeChild(temporaryInput)
+      }
+    }
+
+    if (copied) {
+      setLinkCopied(true)
+      setShareFallbackUrl(null)
+      if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current)
+      copyResetTimerRef.current = setTimeout(() => setLinkCopied(false), 1800)
+    } else {
+      setLinkCopied(false)
+      setShareFallbackUrl(scheduleUrl)
+    }
+  }
+
   const monthlyStats = useMemo(() => {
     let episodes = 0
     let premieres = 0
@@ -278,10 +407,8 @@ export default function MonthlySchedule({
     scheduleData.forEach((items, dateKey) => {
       if (!dateKey.startsWith(monthPrefix)) return
       episodes += items.length
-      premieres += items.filter(item => item.episode === 1).length
-      finales += items.filter(
-        item => item.total_episodes && item.episode === item.total_episodes
-      ).length
+      premieres += items.filter(isPremiere).length
+      finales += items.filter(isFinale).length
     })
     return { episodes, premieres, finales }
   }, [scheduleData, currentDate])
@@ -292,10 +419,37 @@ export default function MonthlySchedule({
     finales: totalFinales,
   } = monthlyStats
 
-  const selectedPremieres = selectedAnime.filter(item => item.episode === 1).length
-  const selectedFinales = selectedAnime.filter(
-    item => item.total_episodes && item.episode === item.total_episodes
-  ).length
+  const selectedPremieres = selectedAnime.filter(isPremiere).length
+  const selectedFinales = selectedAnime.filter(isFinale).length
+  const filteredSelectedAnime = useMemo(
+    () => selectedAnime.filter(item => matchesScheduleFilter(item, scheduleFilter)),
+    [selectedAnime, scheduleFilter]
+  )
+
+  const agendaGroups = useMemo(() => {
+    const monthPrefix = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-`
+    return Array.from(scheduleData.entries())
+      .filter(([dateKey]) => dateKey.startsWith(monthPrefix))
+      .map(([dateKey, items]) => ({
+        dateKey,
+        items: items
+          .filter(item => matchesScheduleFilter(item, scheduleFilter))
+          .sort((a, b) => a.airing_at - b.airing_at),
+      }))
+      .filter(group => group.items.length > 0)
+      .sort((a, b) => a.dateKey.localeCompare(b.dateKey))
+  }, [scheduleData, currentDate, scheduleFilter])
+
+  const timeZoneLabel = useMemo(() => {
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local timezone'
+    const shortName = new Intl.DateTimeFormat('en-US', { timeZoneName: 'short' })
+      .formatToParts(new Date())
+      .find(part => part.type === 'timeZoneName')?.value
+    return shortName ? `${shortName} (${timeZone})` : timeZone
+  }, [])
+
+  const isFutureMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1) >
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
 
   const atFirstMonth = currentDate.getFullYear() === FEATURED_START_YEAR && currentDate.getMonth() === 0
   const atLastMonth = currentDate.getFullYear() === FEATURED_END_YEAR && currentDate.getMonth() === 11
@@ -370,7 +524,7 @@ export default function MonthlySchedule({
               </Select>
             </div>
           </div>
-          <p className="text-muted-foreground text-sm pl-[52px]">
+          <div className="text-muted-foreground text-sm pl-[52px]">
             {loading ? (
               <span className="inline-flex items-center gap-2">
                 <Loader2 className="w-3 h-3 animate-spin" />
@@ -380,21 +534,31 @@ export default function MonthlySchedule({
               <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span>{totalEpisodes} episodes</span>
                 {totalPremieres > 0 && (
-                  <span className="inline-flex items-center gap-1 text-primary">
+                  <button
+                    type="button"
+                    onClick={() => openMonthlyHighlights('premieres')}
+                    className="inline-flex items-center gap-1 text-primary font-semibold hover:underline underline-offset-4"
+                    title="Show every premiere this month"
+                  >
                     <Sparkles className="w-3 h-3" />
                     {totalPremieres} premiere{totalPremieres === 1 ? '' : 's'}
-                  </span>
+                  </button>
                 )}
                 {totalFinales > 0 && (
-                  <span className="inline-flex items-center gap-1 text-amber-500">
+                  <button
+                    type="button"
+                    onClick={() => openMonthlyHighlights('finales')}
+                    className="inline-flex items-center gap-1 text-amber-500 font-semibold hover:underline underline-offset-4"
+                    title="Show every finale this month"
+                  >
                     <Trophy className="w-3 h-3" />
                     {totalFinales} finale{totalFinales === 1 ? '' : 's'}
-                  </span>
+                  </button>
                 )}
-                <span>· times shown in your local timezone</span>
+                <span>· {timeZoneLabel}</span>
               </span>
             )}
-          </p>
+          </div>
         </div>
 
         {/* Month Navigation */}
@@ -430,8 +594,97 @@ export default function MonthlySchedule({
             <span className="hidden sm:inline mr-1">Next</span>
             <ChevronRight className="w-4 h-4" />
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={copyScheduleLink}
+            aria-label={linkCopied ? 'Schedule link copied' : 'Copy schedule link'}
+            className="border-border"
+          >
+            {linkCopied ? <Check className="w-4 h-4 text-emerald-500" /> : <Share2 className="w-4 h-4" />}
+            <span className="hidden md:inline ml-1">{linkCopied ? 'Copied' : 'Share'}</span>
+          </Button>
         </div>
       </div>
+
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in" style={{ animationDelay: '120ms' }}>
+        <div className="flex items-center gap-1 surface-subtle rounded-xl p-1 overflow-x-auto hide-scrollbar" role="group" aria-label="Schedule filter">
+          {([
+            ['all', 'All', CalendarDays],
+            ['premieres', 'Premieres', Sparkles],
+            ['finales', 'Finales', Trophy],
+          ] as const).map(([value, label, Icon]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setScheduleFilter(value)}
+              aria-pressed={scheduleFilter === value}
+              className={`nav-pill flex items-center gap-1.5 whitespace-nowrap ${
+                scheduleFilter === value ? 'nav-pill-active' : 'nav-pill-inactive'
+              }`}
+            >
+              <Icon className="w-3.5 h-3.5" />
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-1 surface-subtle rounded-xl p-1" role="group" aria-label="Schedule view">
+          <button
+            type="button"
+            onClick={() => changeViewMode('calendar')}
+            aria-pressed={viewMode === 'calendar'}
+            className={`nav-pill flex items-center gap-1.5 ${
+              viewMode === 'calendar' ? 'nav-pill-active' : 'nav-pill-inactive'
+            }`}
+          >
+            <Calendar className="w-3.5 h-3.5" />
+            Calendar
+          </button>
+          <button
+            type="button"
+            onClick={() => changeViewMode('agenda')}
+            aria-pressed={viewMode === 'agenda'}
+            className={`nav-pill flex items-center gap-1.5 ${
+              viewMode === 'agenda' ? 'nav-pill-active' : 'nav-pill-inactive'
+            }`}
+          >
+            <List className="w-3.5 h-3.5" />
+            Agenda
+          </button>
+        </div>
+      </div>
+
+      {shareFallbackUrl && (
+        <div className="surface-subtle px-3 py-2 flex items-center gap-2">
+          <Share2 className="w-4 h-4 text-primary shrink-0" />
+          <input
+            aria-label="Shareable schedule link"
+            readOnly
+            value={shareFallbackUrl}
+            onFocus={(event) => event.currentTarget.select()}
+            className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none"
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShareFallbackUrl(null)}
+            aria-label="Hide shareable link"
+          >
+            <X className="w-4 h-4" />
+          </Button>
+        </div>
+      )}
+
+      {isFutureMonth && (
+        <div className="surface-subtle px-4 py-3 flex items-start gap-3 text-sm text-muted-foreground">
+          <Info className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+          <p>
+            Future schedule: only episodes with dates currently published by AniList are shown.
+            More will appear as release dates are announced.
+          </p>
+        </div>
+      )}
 
       <div className="flex flex-col xl:flex-row gap-6">
         {/* Calendar Grid */}
@@ -449,7 +702,7 @@ export default function MonthlySchedule({
                 Retry
               </Button>
             </div>
-          ) : (
+          ) : viewMode === 'calendar' ? (
             <div className="surface-card p-4 sm:p-6">
               {totalEpisodes === 0 && (
                 <div className="mb-4 px-4 py-3 rounded-lg bg-secondary border border-border text-sm text-muted-foreground">
@@ -467,15 +720,16 @@ export default function MonthlySchedule({
 
               {/* Calendar Days */}
               <div className="grid grid-cols-7 gap-1.5 sm:gap-2">
-                {calendarDays.map((date, index) => {
+                {calendarDays.map((date) => {
                   const dateKey = formatDateKey(date)
-                  const dayAnime = scheduleData.get(dateKey) || []
+                  const dayAnime = (scheduleData.get(dateKey) || [])
+                    .filter(item => matchesScheduleFilter(item, scheduleFilter))
                   const hasAnime = dayAnime.length > 0
                   const today = isToday(date)
                   const currentMonth = isCurrentMonth(date)
                   const isSelected = selectedDate === dateKey
-                  const premieresCount = dayAnime.filter(a => a.episode === 1).length
-                  const finalesCount = dayAnime.filter(a => a.total_episodes && a.episode === a.total_episodes).length
+                  const premieresCount = dayAnime.filter(isPremiere).length
+                  const finalesCount = dayAnime.filter(isFinale).length
                   const dateLabel = [
                     date.toLocaleDateString('en-US', {
                       weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
@@ -487,7 +741,7 @@ export default function MonthlySchedule({
 
                   return (
                     <button
-                      key={index}
+                      key={dateKey}
                       onClick={() => handleDateClick(date)}
                       aria-label={dateLabel}
                       className={`
@@ -551,11 +805,76 @@ export default function MonthlySchedule({
                 })}
               </div>
             </div>
+          ) : (
+            <div className="surface-card overflow-hidden">
+              {agendaGroups.length === 0 ? (
+                <div className="px-6 py-16 flex flex-col items-center text-center text-muted-foreground">
+                  <div className="w-14 h-14 rounded-2xl bg-muted/30 flex items-center justify-center mb-3">
+                    <List className="w-7 h-7 opacity-40" />
+                  </div>
+                  <h3 className="font-display font-semibold text-foreground">No matching episodes</h3>
+                  <p className="text-sm mt-1">
+                    {scheduleFilter === 'premieres'
+                      ? 'No premieres have been dated for this month.'
+                      : scheduleFilter === 'finales'
+                        ? 'No finales have been dated for this month.'
+                        : 'AniList has not published dated episodes for this month yet.'}
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y divide-border">
+                  {agendaGroups.map(group => {
+                    const groupDate = new Date(`${group.dateKey}T00:00:00`)
+                    const premiereCount = group.items.filter(isPremiere).length
+                    const finaleCount = group.items.filter(isFinale).length
+
+                    return (
+                      <section key={group.dateKey} className="p-4 sm:p-6">
+                        <div className="grid gap-4 lg:grid-cols-[180px_minmax(0,1fr)] lg:items-start">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-widest text-primary">
+                              {groupDate.toLocaleDateString('en-US', { weekday: 'long' })}
+                            </p>
+                            <h3 className="font-display text-xl font-bold">
+                              {groupDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}
+                            </h3>
+                            <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[10px] font-semibold">
+                              <span className="rounded-full bg-muted px-2 py-1 text-muted-foreground">
+                                {group.items.length} episode{group.items.length === 1 ? '' : 's'}
+                              </span>
+                              {premiereCount > 0 && (
+                                <span className="premiere-badge rounded-full px-2 py-1">
+                                  {premiereCount} premiere{premiereCount === 1 ? '' : 's'}
+                                </span>
+                              )}
+                              {finaleCount > 0 && (
+                                <span className="finale-badge rounded-full px-2 py-1">
+                                  {finaleCount} finale{finaleCount === 1 ? '' : 's'}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                            {group.items.map(item => (
+                              <ScheduleEntryCard
+                                key={item.schedule_id}
+                                item={item}
+                                formatTime={formatLocalTime}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </section>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
           )}
         </div>
 
         {/* Selected Day Panel */}
-        {selectedDate && (
+        {viewMode === 'calendar' && selectedDate && (
           <>
             {/* Mobile/tablet overlay backdrop */}
             <div
@@ -619,106 +938,31 @@ export default function MonthlySchedule({
                       <Loader2 className="w-8 h-8 animate-spin text-primary mb-3" />
                       <p className="text-sm">Loading episodes...</p>
                     </div>
-                  ) : selectedAnime.length === 0 ? (
+                  ) : filteredSelectedAnime.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-center">
                       <div className="w-14 h-14 rounded-2xl bg-muted/30 flex items-center justify-center mb-3">
                         <Clock className="w-7 h-7 opacity-30" />
                       </div>
-                      <p className="text-sm font-medium">No episodes</p>
-                      <p className="text-xs mt-1 opacity-70">Nothing airing this day</p>
+                      <p className="text-sm font-medium">No matching episodes</p>
+                      <p className="text-xs mt-1 opacity-70">
+                        {scheduleFilter === 'premieres'
+                          ? 'No premieres on this day'
+                          : scheduleFilter === 'finales'
+                            ? 'No finales on this day'
+                            : 'Nothing airing this day'}
+                      </p>
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {[...selectedAnime]
+                      {[...filteredSelectedAnime]
                         .sort((a, b) => a.airing_at - b.airing_at)
-                        .map((item) => {
-                          const isPremiere = item.episode === 1
-                          const isFinale = item.total_episodes && item.episode === item.total_episodes
-
-                          return (
-                            <a
-                              key={item.schedule_id}
-                              href={`https://anilist.co/anime/${item.anime_id}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="block group"
-                            >
-                              <div className={`
-                                surface-subtle rounded-xl overflow-hidden transition-all duration-200
-                                ${isPremiere
-                                  ? 'ring-1 ring-primary/60 bg-primary/5'
-                                  : isFinale
-                                  ? 'ring-1 ring-amber-500/50 bg-amber-500/5'
-                                  : 'hover:bg-accent'
-                                }
-                              `}>
-                                <div className="flex gap-3 p-3">
-                                  {item.cover_image && (
-                                    <div className="relative shrink-0">
-                                      <Image
-                                        src={item.cover_image}
-                                        alt={item.title}
-                                        width={56}
-                                        height={80}
-                                        className="w-14 h-20 object-cover rounded-lg shadow-lg"
-                                      />
-                                      {isFinale && (
-                                        <div className="absolute -bottom-1 -right-1 finale-badge text-[8px] px-1.5 py-0.5 rounded flex items-center gap-0.5">
-                                          <Trophy className="w-2 h-2" />
-                                          END
-                                        </div>
-                                      )}
-                                      {item.score ? (
-                                        <div className="absolute -top-1 -left-1 score-badge text-[9px] px-1 py-0.5 flex items-center gap-0.5">
-                                          <Star className="w-2 h-2 text-amber-400 fill-amber-400" />
-                                          {item.score}
-                                        </div>
-                                      ) : null}
-                                    </div>
-                                  )}
-                                  <div className="flex-1 min-w-0 py-0.5">
-                                    {isPremiere && (
-                                      <div className="mb-1.5">
-                                        <span className="premiere-badge inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] tracking-wide">
-                                          <Sparkles className="w-2.5 h-2.5" />
-                                          PREMIERE
-                                        </span>
-                                      </div>
-                                    )}
-                                    <h4 className={`
-                                      font-medium text-sm line-clamp-2 leading-snug mb-1.5 transition-colors
-                                      ${isPremiere
-                                        ? 'text-primary'
-                                        : isFinale
-                                          ? 'text-amber-400'
-                                          : 'text-foreground group-hover:text-primary'
-                                      }
-                                    `}>
-                                      {item.title}
-                                    </h4>
-                                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                      <span className={`font-semibold ${isPremiere ? 'text-primary' : isFinale ? 'text-amber-400' : ''}`}>
-                                        Ep {item.episode}
-                                      </span>
-                                      {item.total_episodes && (
-                                        <>
-                                          <span className="opacity-50">/</span>
-                                          <span>{item.total_episodes}</span>
-                                        </>
-                                      )}
-                                    </div>
-                                    <div className="flex items-center gap-1.5 mt-2">
-                                      <Clock className="w-3 h-3 text-primary" />
-                                      <span className="text-xs font-semibold text-primary">
-                                        {formatLocalTime(item.airing_at)}
-                                      </span>
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            </a>
-                          )
-                        })}
+                        .map((item) => (
+                          <ScheduleEntryCard
+                            key={item.schedule_id}
+                            item={item}
+                            formatTime={formatLocalTime}
+                          />
+                        ))}
                     </div>
                   )}
                 </div>
