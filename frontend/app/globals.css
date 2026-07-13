@@ -193,6 +193,10 @@
   @apply bg-amber-600 text-white font-bold;
 }
 
+.premiere-badge {
+  @apply bg-primary text-primary-foreground font-bold;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    LOADING
    ═══════════════════════════════════════════════════════════════════════════ */

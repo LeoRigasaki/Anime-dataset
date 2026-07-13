@@ -3,6 +3,14 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { FEATURED_END_YEAR, FEATURED_START_YEAR } from '@/lib/dataset-window'
 import { Calendar, Clock, ChevronLeft, ChevronRight, X, Loader2, Sparkles, Star, Trophy } from 'lucide-react'
 
 interface ScheduleItem {
@@ -31,6 +39,10 @@ interface MonthlyScheduleProps {
 const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December']
+const YEAR_OPTIONS = Array.from(
+  { length: FEATURED_END_YEAR - FEATURED_START_YEAR + 1 },
+  (_, index) => FEATURED_START_YEAR + index
+)
 
 export default function MonthlySchedule({
   initialDate,
@@ -58,6 +70,8 @@ export default function MonthlySchedule({
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   const rangeCache = useRef<Map<string, Map<string, ScheduleItem[]>>>(new Map())
+  const skipDefaultSelectionRef = useRef(false)
+  const loadRequestIdRef = useRef(0)
 
   const todayKey = formatLocalDateKey(new Date())
   const [currentDate, setCurrentDate] = useState(initialDate || new Date())
@@ -105,6 +119,8 @@ export default function MonthlySchedule({
   }, [currentDate, selectedDate, onStateChange])
 
   const loadMonthSchedule = async () => {
+    const requestId = ++loadRequestIdRef.current
+
     // Fetch the whole visible calendar range in one request, padded a day on
     // each side so local-timezone grouping never misses boundary episodes.
     const rangeStart = new Date(calendarDays[0])
@@ -118,6 +134,7 @@ export default function MonthlySchedule({
 
     const cached = rangeCache.current.get(cacheKey)
     if (cached) {
+      if (requestId !== loadRequestIdRef.current) return
       setScheduleData(cached)
       applyDefaultSelection(cached)
       return
@@ -145,19 +162,28 @@ export default function MonthlySchedule({
       }
 
       rangeCache.current.set(cacheKey, newScheduleData)
+      if (requestId !== loadRequestIdRef.current) return
       setScheduleData(newScheduleData)
       applyDefaultSelection(newScheduleData)
     } catch (error) {
+      if (requestId !== loadRequestIdRef.current) return
       console.error('Failed to load monthly schedule:', error)
       setLoadError(true)
       setScheduleData(new Map())
     } finally {
-      setLoading(false)
+      if (requestId === loadRequestIdRef.current) setLoading(false)
     }
   }
 
   const applyDefaultSelection = (newScheduleData: Map<string, ScheduleItem[]>) => {
     {
+      if (skipDefaultSelectionRef.current) {
+        skipDefaultSelectionRef.current = false
+        setSelectedDate(null)
+        setSelectedAnime([])
+        return
+      }
+
       if (!selectedDate || !newScheduleData.has(selectedDate)) {
         const today = new Date()
         const todayStr = formatLocalDateKey(today)
@@ -207,15 +233,30 @@ export default function MonthlySchedule({
   }
 
   const navigateMonth = (direction: number) => {
-    const newDate = new Date(currentDate)
-    newDate.setMonth(newDate.getMonth() + direction)
+    const newDate = new Date(
+      currentDate.getFullYear(),
+      currentDate.getMonth() + direction,
+      1
+    )
+    loadRequestIdRef.current += 1
+    skipDefaultSelectionRef.current = true
     setCurrentDate(newDate)
+    setSelectedDate(null)
+    setSelectedAnime([])
+  }
+
+  const jumpToMonth = (month: number, year: number) => {
+    loadRequestIdRef.current += 1
+    skipDefaultSelectionRef.current = true
+    setCurrentDate(new Date(year, month, 1))
     setSelectedDate(null)
     setSelectedAnime([])
   }
 
   const goToToday = () => {
     const today = new Date()
+    loadRequestIdRef.current += 1
+    skipDefaultSelectionRef.current = false
     setCurrentDate(today)
     const todayStr = formatLocalDateKey(today)
     setSelectedDate(todayStr)
@@ -229,11 +270,35 @@ export default function MonthlySchedule({
     setSelectedAnime(anime)
   }
 
-  const totalEpisodes = useMemo(() => {
-    let count = 0
-    scheduleData.forEach(items => count += items.length)
-    return count
-  }, [scheduleData])
+  const monthlyStats = useMemo(() => {
+    let episodes = 0
+    let premieres = 0
+    let finales = 0
+    const monthPrefix = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-`
+    scheduleData.forEach((items, dateKey) => {
+      if (!dateKey.startsWith(monthPrefix)) return
+      episodes += items.length
+      premieres += items.filter(item => item.episode === 1).length
+      finales += items.filter(
+        item => item.total_episodes && item.episode === item.total_episodes
+      ).length
+    })
+    return { episodes, premieres, finales }
+  }, [scheduleData, currentDate])
+
+  const {
+    episodes: totalEpisodes,
+    premieres: totalPremieres,
+    finales: totalFinales,
+  } = monthlyStats
+
+  const selectedPremieres = selectedAnime.filter(item => item.episode === 1).length
+  const selectedFinales = selectedAnime.filter(
+    item => item.total_episodes && item.episode === item.total_episodes
+  ).length
+
+  const atFirstMonth = currentDate.getFullYear() === FEATURED_START_YEAR && currentDate.getMonth() === 0
+  const atLastMonth = currentDate.getFullYear() === FEATURED_END_YEAR && currentDate.getMonth() === 11
 
   // Premium Loading Skeleton
   const LoadingSkeleton = () => (
@@ -268,10 +333,41 @@ export default function MonthlySchedule({
             <div className="w-10 h-10 rounded-xl bg-primary/15 flex items-center justify-center">
               <Calendar className="w-5 h-5 text-primary" />
             </div>
-            <div>
-              <h2 className="font-display text-2xl md:text-3xl font-bold tracking-tight">
-                {MONTH_NAMES[currentDate.getMonth()]} <span className="text-muted-foreground">{currentDate.getFullYear()}</span>
-              </h2>
+            <div className="flex items-center gap-2">
+              <Select
+                value={String(currentDate.getMonth())}
+                onValueChange={(value) => jumpToMonth(Number(value), currentDate.getFullYear())}
+                disabled={loading}
+              >
+                <SelectTrigger
+                  aria-label="Select schedule month"
+                  className="h-10 w-[150px] sm:w-[170px] border-border bg-card px-3 font-display text-lg sm:text-xl font-bold"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {MONTH_NAMES.map((month, index) => (
+                    <SelectItem key={month} value={String(index)}>{month}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={String(currentDate.getFullYear())}
+                onValueChange={(value) => jumpToMonth(currentDate.getMonth(), Number(value))}
+                disabled={loading}
+              >
+                <SelectTrigger
+                  aria-label="Select schedule year"
+                  className="h-10 w-[96px] border-border bg-card px-3 font-display text-lg sm:text-xl font-bold text-muted-foreground"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {YEAR_OPTIONS.map(year => (
+                    <SelectItem key={year} value={String(year)}>{year}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <p className="text-muted-foreground text-sm pl-[52px]">
@@ -281,9 +377,21 @@ export default function MonthlySchedule({
                 Loading episodes...
               </span>
             ) : (
-              <span className="flex items-center gap-2">
-                <Sparkles className="w-3 h-3 text-primary" />
-                {totalEpisodes} episodes this month · times shown in your local timezone
+              <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span>{totalEpisodes} episodes</span>
+                {totalPremieres > 0 && (
+                  <span className="inline-flex items-center gap-1 text-primary">
+                    <Sparkles className="w-3 h-3" />
+                    {totalPremieres} premiere{totalPremieres === 1 ? '' : 's'}
+                  </span>
+                )}
+                {totalFinales > 0 && (
+                  <span className="inline-flex items-center gap-1 text-amber-500">
+                    <Trophy className="w-3 h-3" />
+                    {totalFinales} finale{totalFinales === 1 ? '' : 's'}
+                  </span>
+                )}
+                <span>· times shown in your local timezone</span>
               </span>
             )}
           </p>
@@ -295,7 +403,8 @@ export default function MonthlySchedule({
             variant="outline"
             size="sm"
             onClick={() => navigateMonth(-1)}
-            disabled={loading}
+            disabled={loading || atFirstMonth}
+            aria-label="Previous month"
             className="border-border"
           >
             <ChevronLeft className="w-4 h-4" />
@@ -314,7 +423,8 @@ export default function MonthlySchedule({
             variant="outline"
             size="sm"
             onClick={() => navigateMonth(1)}
-            disabled={loading}
+            disabled={loading || atLastMonth}
+            aria-label="Next month"
             className="border-border"
           >
             <span className="hidden sm:inline mr-1">Next</span>
@@ -343,8 +453,7 @@ export default function MonthlySchedule({
             <div className="surface-card p-4 sm:p-6">
               {totalEpisodes === 0 && (
                 <div className="mb-4 px-4 py-3 rounded-lg bg-secondary border border-border text-sm text-muted-foreground">
-                  No episode data for this month — the schedule covers a rolling window of about
-                  two weeks back and six weeks ahead, refreshed daily.
+                  No episode data for this month — AniList has not published dated episodes for it yet.
                 </div>
               )}
               {/* Day Headers */}
@@ -365,12 +474,22 @@ export default function MonthlySchedule({
                   const today = isToday(date)
                   const currentMonth = isCurrentMonth(date)
                   const isSelected = selectedDate === dateKey
+                  const premieresCount = dayAnime.filter(a => a.episode === 1).length
                   const finalesCount = dayAnime.filter(a => a.total_episodes && a.episode === a.total_episodes).length
+                  const dateLabel = [
+                    date.toLocaleDateString('en-US', {
+                      weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
+                    }),
+                    hasAnime ? `${dayAnime.length} episode${dayAnime.length === 1 ? '' : 's'}` : 'No episodes',
+                    premieresCount > 0 ? `${premieresCount} premiere${premieresCount === 1 ? '' : 's'}` : null,
+                    finalesCount > 0 ? `${finalesCount} finale${finalesCount === 1 ? '' : 's'}` : null,
+                  ].filter(Boolean).join(', ')
 
                   return (
                     <button
                       key={index}
                       onClick={() => handleDateClick(date)}
+                      aria-label={dateLabel}
                       className={`
                         relative aspect-[3/4] sm:aspect-square p-1.5 sm:p-2 rounded-xl transition-all duration-200 text-left flex flex-col
                         ${currentMonth ? 'calendar-day' : 'bg-muted/10 opacity-40'}
@@ -390,16 +509,31 @@ export default function MonthlySchedule({
 
                       {hasAnime && (
                         <div className="mt-auto flex flex-col gap-1 w-full">
-                          {finalesCount > 0 && (
-                            <>
-                              {/* Desktop: Full Badge */}
-                              <div className="hidden sm:flex items-center justify-center gap-1 text-[9px] font-bold rounded-md px-1.5 py-0.5 finale-badge">
-                                <Trophy className="w-2.5 h-2.5" />
-                                {finalesCount} End{finalesCount > 1 ? 's' : ''}
-                              </div>
-                              {/* Mobile: Compact Dot */}
-                              <div className="sm:hidden mx-auto w-2 h-2 rounded-full bg-amber-500 shadow-lg shadow-amber-500/50" />
-                            </>
+                          {(premieresCount > 0 || finalesCount > 0) && (
+                            <div className="hidden sm:flex flex-col gap-1">
+                              {premieresCount > 0 && (
+                                <div className="flex items-center justify-center gap-1 text-[9px] font-bold rounded-md px-1.5 py-0.5 premiere-badge">
+                                  <Sparkles className="w-2.5 h-2.5" />
+                                  {premieresCount} Premiere{premieresCount > 1 ? 's' : ''}
+                                </div>
+                              )}
+                              {finalesCount > 0 && (
+                                <div className="flex items-center justify-center gap-1 text-[9px] font-bold rounded-md px-1.5 py-0.5 finale-badge">
+                                  <Trophy className="w-2.5 h-2.5" />
+                                  {finalesCount} End{finalesCount > 1 ? 's' : ''}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {(premieresCount > 0 || finalesCount > 0) && (
+                            <div className="sm:hidden flex items-center justify-center gap-1.5" aria-hidden="true">
+                              {premieresCount > 0 && (
+                                <div className="w-2 h-2 rounded-full bg-primary shadow-lg shadow-primary/50" />
+                              )}
+                              {finalesCount > 0 && (
+                                <div className="w-2 h-2 rounded-full bg-amber-500 shadow-lg shadow-amber-500/50" />
+                              )}
+                            </div>
                           )}
                           <div className={`
                             text-[10px] font-semibold rounded-md px-1.5 py-0.5 text-center truncate w-full
@@ -446,12 +580,24 @@ export default function MonthlySchedule({
                           day: 'numeric'
                         })}
                       </h3>
-                      {selectedAnime.some(a => a.total_episodes && a.episode === a.total_episodes) && (
-                        <div className="flex items-center gap-1.5 mt-1">
-                          <Trophy className="w-3.5 h-3.5 text-amber-500" />
-                          <span className="text-xs font-semibold text-amber-500">
-                            {selectedAnime.filter(a => a.total_episodes && a.episode === a.total_episodes).length} Finale{selectedAnime.filter(a => a.total_episodes && a.episode === a.total_episodes).length > 1 ? 's' : ''}
-                          </span>
+                      {(selectedPremieres > 0 || selectedFinales > 0) && (
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
+                          {selectedPremieres > 0 && (
+                            <div className="flex items-center gap-1.5 text-primary">
+                              <Sparkles className="w-3.5 h-3.5" />
+                              <span className="text-xs font-semibold">
+                                {selectedPremieres} Premiere{selectedPremieres > 1 ? 's' : ''}
+                              </span>
+                            </div>
+                          )}
+                          {selectedFinales > 0 && (
+                            <div className="flex items-center gap-1.5 text-amber-500">
+                              <Trophy className="w-3.5 h-3.5" />
+                              <span className="text-xs font-semibold">
+                                {selectedFinales} Finale{selectedFinales > 1 ? 's' : ''}
+                              </span>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -459,6 +605,7 @@ export default function MonthlySchedule({
                       variant="ghost"
                       size="sm"
                       onClick={() => setSelectedDate(null)}
+                      aria-label="Close selected day"
                       className="xl:hidden hover:bg-accent rounded-lg"
                     >
                       <X className="w-5 h-5" />
@@ -485,6 +632,7 @@ export default function MonthlySchedule({
                       {[...selectedAnime]
                         .sort((a, b) => a.airing_at - b.airing_at)
                         .map((item) => {
+                          const isPremiere = item.episode === 1
                           const isFinale = item.total_episodes && item.episode === item.total_episodes
 
                           return (
@@ -497,7 +645,9 @@ export default function MonthlySchedule({
                             >
                               <div className={`
                                 surface-subtle rounded-xl overflow-hidden transition-all duration-200
-                                ${isFinale
+                                ${isPremiere
+                                  ? 'ring-1 ring-primary/60 bg-primary/5'
+                                  : isFinale
                                   ? 'ring-1 ring-amber-500/50 bg-amber-500/5'
                                   : 'hover:bg-accent'
                                 }
@@ -527,14 +677,27 @@ export default function MonthlySchedule({
                                     </div>
                                   )}
                                   <div className="flex-1 min-w-0 py-0.5">
+                                    {isPremiere && (
+                                      <div className="mb-1.5">
+                                        <span className="premiere-badge inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] tracking-wide">
+                                          <Sparkles className="w-2.5 h-2.5" />
+                                          PREMIERE
+                                        </span>
+                                      </div>
+                                    )}
                                     <h4 className={`
                                       font-medium text-sm line-clamp-2 leading-snug mb-1.5 transition-colors
-                                      ${isFinale ? 'text-amber-400' : 'text-foreground group-hover:text-primary'}
+                                      ${isPremiere
+                                        ? 'text-primary'
+                                        : isFinale
+                                          ? 'text-amber-400'
+                                          : 'text-foreground group-hover:text-primary'
+                                      }
                                     `}>
                                       {item.title}
                                     </h4>
                                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                      <span className={`font-semibold ${isFinale ? 'text-amber-400' : ''}`}>
+                                      <span className={`font-semibold ${isPremiere ? 'text-primary' : isFinale ? 'text-amber-400' : ''}`}>
                                         Ep {item.episode}
                                       </span>
                                       {item.total_episodes && (

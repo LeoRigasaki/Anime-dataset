@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { FEATURED_END_YEAR, FEATURED_START_YEAR } from '@/lib/dataset-window'
 
 const FALLBACK_GENRES = [
   'Action', 'Adventure', 'Comedy', 'Drama', 'Ecchi', 'Fantasy',
@@ -8,8 +9,6 @@ const FALLBACK_GENRES = [
   'Sports', 'Supernatural', 'Thriller',
 ]
 
-const FEATURED_START_YEAR = 2026
-const FEATURED_END_YEAR = 2029
 const TABLE_CANDIDATES = ['animes_active', 'animes'] as const
 
 type GenreRow = {

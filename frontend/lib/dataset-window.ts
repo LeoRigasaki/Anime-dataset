@@ -1,0 +1,3 @@
+export const FEATURED_START_YEAR = 2026
+export const FEATURED_END_YEAR = 2029
+
