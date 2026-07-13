@@ -82,10 +82,36 @@ export default function Home() {
   const [scheduleDate, setScheduleDate] = useState<Date>(new Date())
   const [scheduleSelectedDate, setScheduleSelectedDate] = useState<string | null>(null)
 
-  const handleScheduleStateChange = (date: Date, selectedDate: string | null) => {
+  const handleScheduleStateChange = useCallback((date: Date, selectedDate: string | null) => {
     setScheduleDate(date)
     setScheduleSelectedDate(selectedDate)
-  }
+  }, [])
+
+  const handleTabChange = useCallback((nextTab: Tab) => {
+    const url = new URL(window.location.href)
+    if (nextTab === 'schedule') {
+      url.searchParams.set('view', 'schedule')
+    } else {
+      for (const key of ['view', 'month', 'date', 'filter', 'mode']) {
+        url.searchParams.delete(key)
+      }
+    }
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+    setTab(nextTab)
+  }, [])
+
+  useEffect(() => {
+    const syncTabFromUrl = () => {
+      const params = new URLSearchParams(window.location.search)
+      const hasScheduleState = params.get('view') === 'schedule' ||
+        params.has('month') || params.has('date')
+      setTab(hasScheduleState ? 'schedule' : 'browse')
+    }
+
+    syncTabFromUrl()
+    window.addEventListener('popstate', syncTabFromUrl)
+    return () => window.removeEventListener('popstate', syncTabFromUrl)
+  }, [])
 
   // Restore the 18+ preference
   useEffect(() => {
@@ -337,14 +363,16 @@ export default function Home() {
             <nav className="flex items-center">
               <div className="flex surface-subtle rounded-xl p-1">
                 <button
-                  onClick={() => setTab('browse')}
+                  onClick={() => handleTabChange('browse')}
+                  aria-label="Browse anime"
                   className={`nav-pill flex items-center gap-1.5 ${tab === 'browse' ? 'nav-pill-active' : 'nav-pill-inactive'}`}
                 >
                   <Search className="w-4 h-4" />
                   <span className="hidden sm:inline">Browse</span>
                 </button>
                 <button
-                  onClick={() => setTab('schedule')}
+                  onClick={() => handleTabChange('schedule')}
+                  aria-label="Open schedule"
                   className={`nav-pill flex items-center gap-1.5 ${tab === 'schedule' ? 'nav-pill-active' : 'nav-pill-inactive'}`}
                 >
                   <Calendar className="w-4 h-4" />
