@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-
-const FEATURED_START_YEAR = 2026
-const FEATURED_END_YEAR = 2029
+import { FEATURED_END_YEAR, FEATURED_START_YEAR } from '@/lib/dataset-window'
 const TABLE_CANDIDATES = ['animes_active', 'animes'] as const
 
 type AnimeRow = {
