@@ -14,6 +14,10 @@ def make_graphql_request(query, variables=None):
     headers = {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
+        # AniList 403s requests with no Referer, returning a body that claims
+        # the API is "temporarily disabled". Browsers always send one.
+        'Referer': 'https://anilist.co/',
+        'Origin': 'https://anilist.co',
     }
     
     payload = {
