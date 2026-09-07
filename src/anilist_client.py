@@ -8,6 +8,16 @@ from functools import lru_cache
 
 ANILIST_URL = "https://graphql.anilist.co"
 
+# AniList's edge rejects requests that arrive without a Referer header with a
+# 403 whose body claims the API is "temporarily disabled". Browsers always send
+# one, which is why the site works while bare API clients get blocked.
+ANILIST_HEADERS = {
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Referer": "https://anilist.co/",
+    "Origin": "https://anilist.co",
+}
+
 # Rate limiting - more conservative to avoid 429 errors
 _last_request_time = 0
 _MIN_REQUEST_INTERVAL = 1.0  # ~60 requests/min max (more conservative)
@@ -106,7 +116,7 @@ def _parse_date(date_obj: Optional[dict]) -> Optional[str]:
 async def search_anime_live(search: str) -> Optional[dict]:
     """Search for anime by title using AniList API."""
     await _rate_limit()
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0, headers=ANILIST_HEADERS) as client:
         try:
             resp = await client.post(
                 ANILIST_URL,
@@ -125,7 +135,7 @@ async def search_anime_live(search: str) -> Optional[dict]:
 async def get_anime_by_id(anime_id: int) -> Optional[dict]:
     """Get anime details by AniList ID."""
     await _rate_limit()
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0, headers=ANILIST_HEADERS) as client:
         try:
             resp = await client.post(
                 ANILIST_URL,
@@ -226,7 +236,7 @@ async def get_weekly_airing_schedule(
     page = 1
     max_retries = 5
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=30.0, headers=ANILIST_HEADERS) as client:
         while max_pages is None or page <= max_pages:
             variables = {
                 "startTime": start_timestamp,
@@ -337,7 +347,7 @@ async def get_seasonal_anime(season: str, year: int) -> list[dict]:
     
     results = []
     page = 1
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    async with httpx.AsyncClient(timeout=15.0, headers=ANILIST_HEADERS) as client:
         while True:
             await _rate_limit()
             try:
